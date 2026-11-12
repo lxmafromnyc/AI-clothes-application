@@ -89,13 +89,30 @@ asChecked(UQ_PAIR, () => X.withFixtureBrand(() => {
   C.okCm = both(uniqloRef('S'), hoodie, { unit: 'cm' });
   C.closest = both(uniqloRef('M'), everlane(base, IF_STATED));
   C.closestCm = both(uniqloRef('M'), everlane(base, IF_STATED), { unit: 'cm' });
-  C.tradeoff = both(uniqloRef('M'), everlane(Object.assign({}, base, { S: Object.assign({}, base.S, { chest_circumference: '43' }) }), IF_STATED));
+  /* M's length 1¼ in longer than the reference: past its 1 in tolerance (a trade-off), inside the
+     engine's 1½ in "slightly long" band — a recommendation with a trade-off. (Everlane's published
+     M, 3 in longer, is beyond that band: "too long", which the decision refuses.) */
+  C.tradeoff = both(uniqloRef('M'), everlane(Object.assign({}, base, { S: Object.assign({}, base.S, { chest_circumference: '43' }), M: Object.assign({}, base.M, { body_length: '28' }) }), IF_STATED));
   C.methods = both(uniqloRef('M'), everlane(base));
   const bodyOnly = clone(hoodie);
   delete bodyOnly.charts.garment;
   C.bodyAnswer = both(uniqloRef('M'), bodyOnly);
   C.noReference = both(Schema.empty(), hoodie);
 }));
+/* W2: a chart whose top-ranked size (L) is 4 cm long in the body — past the 1½ in band — and whose
+   second (M) is inside every band: the answer as the route builds it (decision.decideWithDetail, the
+   comparison it rests on held to it — api/size-recommendation.js comparedAnswer) */
+{
+  const FORM = { chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' };
+  const rows = { S: [53, 45, 64, 59], M: [55.5, 47.5, 66, 60.5], L: [58, 50, 68, 62], XL: [60.5, 52.5, 70, 63.5] };
+  const chart = engine.candidateRecord({ type: 'hoodies', brand: 'Illustrative Outfitters', name: 'Illustrative Heavyweight Hoodie', unit: 'cm', methods: Object.assign({ registry: 1 }, FORM),
+    sizes: Object.entries(rows).map(([size, [chestWidth, shoulderWidth, bodyLength, sleeveLength]]) => ({ size, measurements: { chestWidth, shoulderWidth, bodyLength, sleeveLength } })) });
+  const mine = Schema.empty();
+  mine.garments.hoodies = Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: null, size: null, measurements: { unit: 'cm', chestWidth: 57, bodyLength: 64, shoulderWidth: 49.5, sleeveLength: 62.5 }, methods: Object.assign({ registry: 1 }, FORM) } });
+  const { decision: d, detail } = decision.decideWithDetail(mine, chart, { via: 'compare' });
+  C.picked = clone(decision.heldComparison(detail.compare, d));
+  D.set(C.picked, clone(d));
+}
 /* production state: UNIQLO pending review */
 C.unverifiedChart = clone(chartOf.fromRecord(sizing.byId(X.UQ_HOODIE)));
 C.unverifiedAnswer = both(uniqloRef('M'), sizing.byId(X.UQ_HOODIE));
@@ -111,6 +128,7 @@ assert.deepStrictEqual([C.ok.status, C.ok.recommended, C.ok.tradeoffs.length], [
 assert.deepStrictEqual([C.closest.status, C.closest.withheld, C.closest.closest], ['partial', 'outside-tolerance', 'S']);
 assert.deepStrictEqual([C.tradeoff.status, C.tradeoff.recommended, C.tradeoff.tradeoffs.map((t) => t.dim)], ['ok', 'M', ['bodyLength']]);
 assert.deepStrictEqual([C.methods.status, C.methods.missing[0].code], ['insufficient', 'nothing-comparable']);
+assert.deepStrictEqual([D.get(C.picked).outcome, D.get(C.picked).size, C.picked.recommended, C.picked.closest, C.picked.sizes.find((s) => s.size === 'L').rank], ['OK', 'M', 'M', 'L', 1]);
 assert.deepStrictEqual([C.bodyAnswer.status, C.bodyAnswer.missing[0].code], ['insufficient', 'body-chart-only']);
 assert.deepStrictEqual([C.noReference.missing[0].code, C.unverifiedAnswer.missing[0].code, C.noRecord.missing[0].code], ['no-reference', 'unverified-data', 'no-record']);
 assert.deepStrictEqual([C.checkedChart.comparable, C.unverifiedChart.comparable, C.unverifiedChart.verification], [true, false, 'unverified']);
@@ -352,6 +370,21 @@ async function test(name, fn) {
     assert.deepStrictEqual(s.scale, scaleOf(C.tradeoff, 'M'));
     assert.deepStrictEqual(s.scale.map(([d]) => d), ['chestWidth', 'bodyLength', 'shoulderWidth']);
     assert.ok(s.scale.find(([d]) => d === 'bodyLength')[2] === 'false', 'the length it misses is not called similar');
+  });
+
+  await test('W2: the top-ranked size outside a band, the next inside every one — Find Fit recommends the next, says why the first was passed over, and draws the recommended size\'s own figures', async () => {
+    await show(C.checkedChart, answer(C.picked));
+    const s = await seen();
+    assert.deepStrictEqual([s.verdict, s.heading, s.recommended, s.closest], ['recommended', 'Compared with your reference', 1, null]);
+    assert.match(s.text, /Recommended size:\s*M/);
+    assert.ok(!/Recommended size:\s*L/.test(s.text), 'never the passed-over size');
+    /* why, in the shopper's words: M meets the criteria; L ranks closer but is outside them */
+    assert.ok(s.text.includes('M is the closest size to your reference across chest, length, shoulders and sleeves that meets Fynd’s comparison criteria. L ranks closer overall, but differs from your reference by more than Fynd’s comparison accepts on at least one measurement.'), s.text);
+    /* M's own trade-offs and figures, never L's */
+    assert.match(s.text, /Where size M still differs/);
+    assert.deepStrictEqual(s.tradeoffs.map((t) => t.dim), C.picked.tradeoffs.map((t) => t.dim));
+    assert.ok(C.picked.tradeoffs.every((t) => t.size === 'M'));
+    assert.deepStrictEqual(s.scale, scaleOf(C.picked, 'M'));
   });
 
   await test('an "ok" answer with every difference a real zero: "0.0 in", "the same", all similar — and the sources as the record says', async () => {

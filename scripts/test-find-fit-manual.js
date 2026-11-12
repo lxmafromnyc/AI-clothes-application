@@ -332,6 +332,24 @@ const post = (body, opts) => new Promise((resolve) => {
     assert.deepStrictEqual([wide.decision.outcome, wide.decision.size, wide.decision.closest, wide.comparison.recommended, wide.comparison.closest, wide.comparison.withheld], ['NO_MATCH', null, 'L', null, 'L', 'decision']);
   });
 
+  await test('W2 through the route: a whole chart whose top-ranked size is outside a band answers with the next acceptable one — the comparison sent describes that size, the ranking unchanged', async () => {
+    /* in cm: M chest exact but 4.1 cm (1.6 in) short in the body; S 3.3 cm (1.3 in) narrower flat, inside every band */
+    const chart = { type: 'hoodies', brand: 'AnyBrand', name: 'Heavy Hood', unit: 'cm', measures: 'finished-garment', methods: Object.assign({ registry: 1 }, FORM), sizes: [
+      { size: 'S', measurements: Object.assign({}, SAME, { chestWidth: 54.7 }) },
+      { size: 'M', measurements: Object.assign({}, SAME, { bodyLength: 63.9 }) },
+      { size: 'L', measurements: { chestWidth: 63, bodyLength: 71, shoulderWidth: 53, sleeveLength: 64 } }
+    ] };
+    const got = await post({ chart, reference: SENT });
+    assert.strictEqual(got.status, 200);
+    const { comparison: c, decision: d } = got.body;
+    assert.deepStrictEqual([d.outcome, d.size, c.status, c.recommended, c.closest], ['OK', 'S', 'ok', 'S', 'M']);
+    assert.deepStrictEqual(d.qualifiers.filter((q) => q.code === 'higher-ranked-size-outside-range').map((q) => [q.size, q.dims]), [['M', ['bodyLength']]]);
+    assert.match(c.summary, /^S is the closest size .* M ranks closer overall/);
+    assert.ok(c.tradeoffs.every((t) => t.size === 'S'));
+    assert.deepStrictEqual(c.sizes.slice().sort((a, b) => a.rank - b.rank).map((s) => s.size), ['M', 'S', 'L']);
+    assert.strictEqual(d.confidence, c.reliability);
+  });
+
   await test('an item that doesn’t read is refused whole with every field’s message; a garment that doesn’t read, too — nothing compared', async () => {
     const bad = await post({ candidate: item({ chestWidth: '-1', bodyLength: 'x' }), reference: SENT });
     assert.strictEqual(bad.status, 400);
