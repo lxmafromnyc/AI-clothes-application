@@ -10,7 +10,9 @@
    fetches the whole file and a byte-range sample, hands the sample to
    scripts/rakuten-sample.js — and refuses a server whose key doesn't
    match the fingerprint before any authentication, a wrong password, a
-   missing file, and paths that aren't plain.
+   missing file, and paths that aren't plain. The server keeps answering
+   127.0.0.1 throughout: OpenSSH 9.8+'s PerSourcePenalties, which every
+   probe and refused login here would otherwise trip, are switched off.
 
    And the helper itself: a name already in use is refused with nothing
    changed; on success, on an uncaught error, on process.exit and on
@@ -205,6 +207,22 @@ const leftNothing = (made, before) => {
       assert.strictEqual(run(['fetch', '~/nothing-here.gz', path.join(h.dir, 'x')]).status, 78, 'curl: remote file not found');
       ['../etc/passwd', '~/a b', '~/$(id)', '~/x;rm'].forEach((p) => assert.strictEqual(run(['fetch', p, path.join(h.dir, 'x')]).status, 2, p));
       assert.strictEqual(run(['list', '~/'], { RAKUTEN_SFTP_USER: '' }).status, 2);
+    });
+
+    await test('the server never penalises the test’s own address (OpenSSH 9.8+ PerSourcePenalties): after more bare connections and failed logins than its defaults allow, it still lists', () => {
+      const v = server.opensshVersion();
+      const config = fs.readFileSync(h.config, 'utf8');
+      if (v && (v[0] > 9 || (v[0] === 9 && v[1] >= 8))) {
+        assert.ok(h.penaltiesOff && config.includes(`\n${server.PENALTIES_OFF}\n`), `OpenSSH ${v.join('.')} penalises by default, and the config doesn’t switch it off`);
+      }
+      /* the defaults refuse a source past 15s: these alone are 20 × 1s and 3 × 5s */
+      for (let i = 0; i < 20; i += 1) assert.ok(server.listening(h.port), `not listening at bare connection ${i + 1}`);
+      for (let i = 0; i < 3; i += 1) assert.strictEqual(run(['list', '~/'], { RAKUTEN_SFTP_PASSWORD: 'wrong' }).status, 67, `failed login ${i + 1}`);
+      const r = run(['list', '~/']);
+      assert.strictEqual(r.status, 0, r.stderr);
+      assert.match(r.stdout, new RegExp(`${feedName}$`, 'm'));
+      const log = fs.readFileSync(h.log, 'utf8');
+      assert.ok(!/penalt|drop connection/i.test(log), `the server penalised or dropped a connection:\n${log.split('\n').filter((l) => /penalt|drop connection/i.test(l)).slice(0, 5).join('\n')}`);
     });
 
     await test('the credential never reaches a command line or the output, and the script leaves no file of its own behind', () => {

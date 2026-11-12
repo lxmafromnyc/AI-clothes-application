@@ -25,12 +25,23 @@
    No new threshold is introduced. A size is unacceptable when the
    engine's own fit classes or tolerances already say so:
 
-     garment vs garment   the chest of the closest size falls outside
-                          the "slightly" band of the engine's reference
-                          classes (CATEGORY_PARAMS.fitBands.reference:
-                          beyond it is "too tight"/"too loose"), or every
-                          compared measurement misses its tolerance
-                          (compare()'s own "outside-tolerance")
+     garment vs garment   any compared measurement of the closest size
+                          (chest, length, sleeves, shoulders) falls
+                          outside the "slightly" band of the engine's
+                          reference classes for that measurement
+                          (CATEGORY_PARAMS.fitBands.reference[dim]:
+                          beyond it is "too tight/loose/short/long"), or
+                          every compared measurement misses its
+                          tolerance (compare()'s own "outside-tolerance").
+                          Sizes are tried in the engine's own ranking
+                          (score, then the chart's order): the first
+                          acceptable one is the answer, described by the
+                          engine for that size (compare's pick), each
+                          size ranked above it named in a qualifier
+                          ("higher-ranked-size-outside-range"). NO_MATCH
+                          only when no ranked size is acceptable — the
+                          closest named is still rank 1, with its reasons.
+                          An alternative is named only when acceptable too.
      body plus room       the leading size's chest class is "too tight"
                           or "too loose" at every reading of the
                           shopper's chest range (engine fitBySize)
@@ -114,6 +125,7 @@ const REASONS = {
   /* NO_MATCH */
   'outside-size-range': { outcome: 'NO_MATCH', about: 'The shopper is beyond the smallest or largest size\'s chart range.' },
   'chest-outside-acceptable-range': { outcome: 'NO_MATCH', about: 'Even the closest size is too tight or too loose through the chest, by the engine\'s own fit classes.' },
+  'measurement-outside-acceptable-range': { outcome: 'NO_MATCH', about: 'Even the closest size is too short/long or too narrow/wide on a compared length, sleeve or shoulder measurement, by the engine\'s own fit classes.' },
   'all-compared-outside-tolerance': { outcome: 'NO_MATCH', about: 'Every compared measurement of the closest size misses its tolerance.' },
   /* qualifiers */
   'estimated-conversion': { outcome: null, about: 'A circumference was worked out as twice a flat width: an estimate, by the stated rule.' },
@@ -124,6 +136,7 @@ const REASONS = {
   'fit-goal-assumed': { outcome: null, about: 'The shopper hasn\'t said how they like it to fit; true to size was assumed.' },
   'optional-measurement-not-compared': { outcome: null, about: 'An optional measurement couldn\'t be compared; the required ones were.' },
   'sizes-excluded-incomplete': { outcome: null, about: 'Some sizes publish too few measurements and were left out of the ranking.' },
+  'higher-ranked-size-outside-range': { outcome: null, about: 'A size ranked closer to the reference was passed over: one of its compared measurements is outside the engine\'s own fit classes (`because`: its NO_MATCH codes). The size given is the best-ranked one inside them.' },
   'reference-not-comparable': { outcome: null, about: 'The shopper\'s reference garment couldn\'t be compared; the rest of the profile was used.' }
 };
 
@@ -132,6 +145,16 @@ const REASONS = {
    customerMessage(): words chosen from the reason's code and its data
    (the closest size, which side, which way), never parsed back. */
 const sizeWord = (s) => (s ? `size ${s}` : 'any size');
+/* a non-chest measurement outside its band, in words: "shorter in the sleeves" */
+const MISMATCH_WORDS = {
+  bodyLength: { more: 'longer in the body', less: 'shorter in the body' },
+  sleeveLength: { more: 'longer in the sleeves', less: 'shorter in the sleeves' },
+  shoulderWidth: { more: 'wider across the shoulders', less: 'narrower across the shoulders' }
+};
+const mismatchWords = (r) => {
+  const w = MISMATCH_WORDS[r.dim];
+  return w ? w[r.differenceIn > 0 ? 'more' : 'less'] : 'different on one measurement';
+};
 /* an item the shopper entered by hand: what's missing is theirs to add,
    said as such — never as a brand not publishing it */
 function enteredMessage(r, context) {
@@ -155,6 +178,9 @@ function enteredMessage(r, context) {
       const roomier = r.class ? r.class === 'too-loose' : r.differenceAroundIn > 0;
       return `${r.size ? `Size ${r.size}` : 'This size'} would be much ${roomier ? 'roomier' : 'tighter'} through the chest than your garment — more than Fynd’s comparison allows — so it isn’t recommended.`;
     }
+    case 'measurement-outside-acceptable-range':
+      if (several) return null;
+      return `${r.size ? `Size ${r.size}` : 'This size'} would be much ${mismatchWords(r)} than your garment — more than Fynd’s comparison allows — so it isn’t recommended.`;
     case 'all-compared-outside-tolerance':
       if (several) return null;
       return `${r.size ? `Size ${r.size}` : 'This size'} differs noticeably from your garment on every measurement Fynd could compare, so it doesn’t meet the comparison criteria.`;
@@ -176,8 +202,12 @@ function customerMessage(r, context) {
       const against = r.class ? 'the fit you asked for' : 'the garment you compared it with';
       return `Even the closest size, ${sizeWord(r.size)}, would be much ${roomier ? 'roomier' : 'tighter'} through the chest than ${against}, so Fynd isn’t suggesting a size for this product.`;
     }
+    case 'measurement-outside-acceptable-range':
+      return `Even the closest size, ${sizeWord(r.size)}, would be much ${mismatchWords(r)} than the garment you compared it with, so Fynd isn’t suggesting a size for this product.`;
     case 'all-compared-outside-tolerance':
       return `Even the closest size, ${sizeWord(r.size)}, is noticeably different from the garment you compared it with on every measurement Fynd could check, so Fynd isn’t suggesting a size for this product.`;
+    case 'higher-ranked-size-outside-range':
+      return `${r.size ? `Size ${r.size}` : 'A size'} ranks closer overall, but differs from the garment you compared it with by more than Fynd’s comparison accepts on at least one measurement, so it isn’t the size suggested.`;
     case 'conflicting-references':
       return 'Your chest measurement and the sizes you said fit you point to different sizes. Check them on your fit profile, and Fynd can suggest a size once they agree.';
     case 'measurement-out-of-supported-range':
@@ -430,7 +460,31 @@ function dimensionMessage(d, context) {
 
 /* ---------- a compare() answer, held to the policy ---------- */
 
-function fromCompare(c, record) {
+/* One compared dimension's difference (this size minus the reference), in
+   inches and unrounded: from both sides' own published or measured values
+   and units (compare()'s `measurement` and `reference.measurements`), the
+   reference taken into the size's method by the registry's stated factor
+   (methods.relation: 1, or chest's flat ↔ around). The band decision rests
+   on this, never on `difference`, which is rounded in the unit shown — so
+   inches and centimetres decide alike. Falls back to `difference` only
+   when the raw values aren't there. */
+const UNITS = ['in', 'cm'];
+function unroundedDifferenceIn(c, x, d) {
+  const own = x && x.measurement;
+  const ref = c.reference && c.reference.measurements && c.reference.measurements[d];
+  const usable = (m) => m && typeof m.value === 'number' && Number.isFinite(m.value) && UNITS.includes(m.unit) && typeof m.method === 'string';
+  if (usable(own) && usable(ref)) {
+    const r = methods.relation(d, ref.method, own.method);
+    if (r) return toInches(own.value, own.unit) - toInches(ref.value, ref.unit) * (r.relation === 'convertible' ? r.factor : 1);
+  }
+  return toInches(x.difference, c.unit);
+}
+
+/* A compare() answer held to the policy: { decision, comparison }, where
+   comparison is the answer the decision rests on — compare()'s own, or the
+   same ranking described for the size chosen (describe, from
+   engine.rankedComparison) when the top-ranked one isn't acceptable. */
+function fromCompare(c, record, describe) {
   const params = engine.CATEGORY_PARAMS[record.category];
   const base = { method: 'reference-garment', via: 'compare', category: record.category, productId: record.id };
   const qualifiers = [];
@@ -441,21 +495,57 @@ function fromCompare(c, record) {
   if (unranked.length) qualifiers.push(reason('sizes-excluded-incomplete', { sizes: unranked }));
   if (engine.isShopperEntered(record)) qualifiers.push(reason('target-entered-by-shopper'));
 
-  if (c.withheld === 'unverified') return result(OUTCOMES.INSUFFICIENT_DATA, Object.assign(base, { reasons: [reason('unverified-data', { side: 'target' })], qualifiers }));
+  if (c.withheld === 'unverified') return { decision: result(OUTCOMES.INSUFFICIENT_DATA, Object.assign(base, { reasons: [reason('unverified-data', { side: 'target' })], qualifiers })), comparison: c };
 
-  /* the chest of the closest size against the engine's reference classes */
-  const closest = c.sizes.find((s) => s.size === c.closest);
-  const chest = closest && closest.dimensions.chestWidth;
-  const reasons = [];
-  if (chest && chest.compared) {
-    const flat = record.charts.garment.dimensions.chestWidth.method === 'flat-width-armpit-to-armpit';
-    const aroundIn = toInches(chest.difference, c.unit) * (flat ? 2 : 1);
-    const slight = params.fitBands.reference.chestWidth.slight;
-    if (Math.abs(aroundIn) > slight + EPS) reasons.push(reason('chest-outside-acceptable-range', { size: c.closest, differenceAroundIn: Math.round(aroundIn * 100) / 100, acceptableWithinIn: slight }));
+  /* every compared measurement of a size against the engine's reference
+     classes for it: beyond `slight` is "too …" — and a size whose every
+     compared measurement misses its tolerance (compare()'s own
+     "outside-tolerance") is never accepted. [] when the size is acceptable. */
+  const bandReasons = (s) => {
+    const out = [];
+    const diffIn = (d) => unroundedDifferenceIn(c, s.dimensions[d], d);
+    const chest = s.dimensions.chestWidth;
+    if (chest && chest.compared) {
+      const flat = record.charts.garment.dimensions.chestWidth.method === 'flat-width-armpit-to-armpit';
+      const aroundIn = diffIn('chestWidth') * (flat ? 2 : 1);
+      const slight = params.fitBands.reference.chestWidth.slight;
+      if (Math.abs(aroundIn) > slight + EPS) out.push(reason('chest-outside-acceptable-range', { size: s.size, differenceAroundIn: Math.round(aroundIn * 100) / 100, acceptableWithinIn: slight }));
+    }
+    /* lengths and shoulders: compared only by the same method (engine comparable()), so the difference is direct */
+    DIMS.filter((d) => d !== 'chestWidth').forEach((d) => {
+      const x = s.dimensions[d];
+      const band = params.fitBands.reference[d];
+      if (!x || !x.compared || !band) return;
+      const off = diffIn(d);
+      if (Math.abs(off) > band.slight + EPS) out.push(reason('measurement-outside-acceptable-range', { size: s.size, dim: d, differenceIn: Math.round(off * 100) / 100, acceptableWithinIn: band.slight }));
+    });
+    if (compared.length && compared.every((d) => s.dimensions[d] && !s.dimensions[d].withinTolerance)) out.push(reason('all-compared-outside-tolerance', { size: s.size }));
+    return out;
+  };
+  const acceptable = (size) => {
+    const s = c.sizes.find((x) => x.size === size);
+    return Boolean(s && s.score !== null && !bandReasons(s).length);
+  };
+  /* the engine's ranking, unchanged: score, then the chart's own order (rank) */
+  const ranked = c.sizes.filter((s) => s.score !== null && typeof s.rank === 'number').sort((a, b) => a.rank - b.rank);
+  const top = ranked.find((s) => s.size === c.closest);
+  const topReasons = top ? bandReasons(top) : [];
+  /* named beside an answer only when it is acceptable too */
+  const alternativeOf = (answer) => (answer.alternative && acceptable(answer.alternative) ? answer.alternative : null);
+  if (top && !topReasons.length) {
+    return { decision: result(OUTCOMES.OK, Object.assign(base, { size: c.recommended, alternative: alternativeOf(c), confidence: c.reliability, qualifiers })), comparison: c };
   }
-  if (c.withheld === 'outside-tolerance') reasons.push(reason('all-compared-outside-tolerance', { size: c.closest }));
-  if (reasons.length) return result(OUTCOMES.NO_MATCH, Object.assign(base, { closest: c.closest, reasons, qualifiers }));
-  return result(OUTCOMES.OK, Object.assign(base, { size: c.recommended, alternative: c.alternative, confidence: c.reliability, qualifiers }));
+  /* the top-ranked size isn't acceptable: the next in the ranking that is, if any — never a size
+     the ranking left out, never a reordering. Described by the engine itself (describe), from the
+     same ranking: its summary, trade-offs, caveats and confidence are that size's own */
+  const chosen = describe ? ranked.find((s) => s !== top && !bandReasons(s).length) : null;
+  if (!chosen) return { decision: result(OUTCOMES.NO_MATCH, Object.assign(base, { closest: c.closest, reasons: topReasons, qualifiers })), comparison: c };
+  const described = describe(chosen.size);
+  const passedOver = ranked.slice(0, ranked.indexOf(chosen)).map((s) => reason('higher-ranked-size-outside-range', { size: s.size, because: [...new Set(bandReasons(s).map((r) => r.code))], dims: bandReasons(s).map((r) => r.dim || (r.code === 'chest-outside-acceptable-range' ? 'chestWidth' : null)).filter(Boolean) }));
+  return {
+    decision: result(OUTCOMES.OK, Object.assign(base, { size: described.recommended, alternative: alternativeOf(described), confidence: described.reliability, qualifiers: qualifiers.concat(passedOver) })),
+    comparison: described
+  };
 }
 
 /* ---------- a recommend() answer, held to the policy ---------- */
@@ -601,11 +691,18 @@ function decideWithDetail(profile, target, opts) {
      answer is INSUFFICIENT_DATA, never a size from their body and an
      assumed room instead. */
   if (o.via === 'compare' || hasReference(profile, record.category)) {
-    const c = engine.compare(profile || null, record, { unit: o.unit });
+    /* one ranking: its top-ranked size described (compare()'s own answer), and, when the decision
+       chooses another, the same ranking described for it — never scored twice */
+    const ranking = engine.rankedComparison(profile || null, record, { unit: o.unit });
+    const c = ranking.result;
     detail.compare = c;
     const dimensions = dimensionsFor(profile, record);
-    const decided = c.status === 'ok' || c.status === 'partial' ? fromCompare(c, record)
-      : result(OUTCOMES.INSUFFICIENT_DATA, Object.assign(base, { method: 'reference-garment', via: 'compare', reasons: compareReasons(c) }));
+    let decided;
+    if (c.status === 'ok' || c.status === 'partial') {
+      const held = fromCompare(c, record, ranking.describe);
+      decided = held.decision;
+      detail.compare = held.comparison;
+    } else decided = result(OUTCOMES.INSUFFICIENT_DATA, Object.assign(base, { method: 'reference-garment', via: 'compare', reasons: compareReasons(c) }));
     return done(Object.assign(decided, { comparison: 'garment-to-garment', dimensions }));
   }
   /* no reference garment: the rest of the profile — a chest measurement,
@@ -639,7 +736,9 @@ const withheldWords = (d) => (d && Array.isArray(d.messages) && d.messages.lengt
 
 /* engine.compare()'s answer, held to its decision */
 function heldComparison(c, d) {
-  if (!c || typeof c !== 'object' || !d || d.outcome === OUTCOMES.OK) return c;
+  if (!c || typeof c !== 'object' || !d) return c;
+  /* OK: the alternative beside it is the decision's (one it found acceptable too), or none */
+  if (d.outcome === OUTCOMES.OK) return c.alternative == null || c.alternative === d.alternative ? c : Object.assign({}, c, { alternative: d.alternative });
   if (c.recommended == null && c.alternative == null) return c;
   return Object.assign({}, c, {
     /* still each size beside the reference — never one called recommended */

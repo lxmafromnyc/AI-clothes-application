@@ -185,7 +185,7 @@ function sizeListing(given, record) {
   const suggested = detail.recommend || (d.via === 'compare' ? null : engine.recommend(profile, record));
   if (d.outcome === decision.OUTCOMES.OK) {
     if (d.via === 'compare') {
-      return withDecision(Object.assign(base, { status: 'ok', by: 'reference', resultType: 'garment-comparison', size: d.size, alternative: compared.alternative, reliability: d.confidence, summary: compared.summary, caveats: compared.caveats }));
+      return withDecision(Object.assign(base, { status: 'ok', by: 'reference', resultType: 'garment-comparison', size: d.size, alternative: d.alternative, reliability: d.confidence, summary: compared.summary, caveats: compared.caveats }));
     }
     /* a body estimate: its own result type, never a size called the
        shopper's — `size` stays null, the estimate is `estimate`. The
@@ -333,8 +333,10 @@ function comparedAnswer(profile, record, unit) {
   /* the saved garment's measurements taken the way this chart measures, where it has them —
      the same selected profile to the decision and the comparison (./_sizing/select-measurements.js) */
   const selected = selectMeasurements.select(profile, record);
-  const d = decision.decide(selected.profile, record, { via: 'compare', unit });
-  const compared = engine.compare(selected.profile, record, { unit });
+  /* the comparison the decision rests on — for the size it chose, from its one ranking; the
+     engine is asked again only when the decision stopped before comparing at all */
+  const { decision: d, detail } = decision.decideWithDetail(selected.profile, record, { via: 'compare', unit });
+  const compared = detail.compare || engine.compare(selected.profile, record, { unit });
   const out = { comparison: decision.heldComparison(compared, d), decision: d, resultType: 'garment-comparison' };
   if (selected.used.length) out.alternatesUsed = selected.used;
   /* asked for only when measuring another way would make a comparison possible */

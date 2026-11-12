@@ -1583,9 +1583,35 @@ function tooFew(dims, skipped) {
   };
 }
 
+/* ---------------------------------------------------------
+   compare(profile, record, opts): every size beside the reference,
+   scored and ranked, and the top-ranked size described — or, with
+   opts.pick, another ranked size described in its place.
+
+   pick is for the decision (./decision.js), which accepts a size only
+   when every compared measurement is inside the engine's own bands and
+   walks the ranking for the first that is. Scores, ranks and `closest`
+   (always rank 1) never change with it; only the size the summary,
+   trade-offs, near tie, alternative and caveats describe does. A pick
+   that is not one of the ranked sizes is an error, never a guess.
+   Unset, the answer is exactly what it always was.
+
+   rankedComparison() is the same work done once: `result`, the answer
+   compare() gives unset, and `describe(pick)`, the same ranking
+   described for another size — so a caller that needs both never
+   scores twice. describe is null when no size was ranked.
+   --------------------------------------------------------- */
 function compare(profile, record, opts) {
+  const ranked = rankedComparison(profile, record, opts);
+  const pick = opts && opts.pick;
+  if (pick === undefined || pick === null) return ranked.result;
+  if (!ranked.describe) throw new RangeError(`compare(): no size is ranked, so "${pick}" can't be described.`);
+  return ranked.describe(pick);
+}
+
+function rankedComparison(profile, record, opts) {
   const options = Object.assign({ includeUnverified: false, records: RECORDS }, opts || {});
-  const no = (code, message, next, extra) => Object.assign({ status: 'insufficient', productId: record ? record.id : null, missing: [{ code, message }], next: next || [] }, extra || {});
+  const no = (code, message, next, extra) => ({ result: Object.assign({ status: 'insufficient', productId: record ? record.id : null, missing: [{ code, message }], next: next || [] }, extra || {}), describe: null });
   const ready = prepare(profile, record, options);
   if (ready.fail) return no(ready.fail.code, ready.fail.message, ready.fail.next, ready.fail.extra);
   const { params, productContext, found, anchor, notes, ref, favorite, shopper, used, skipped, dims } = ready.ok;
@@ -1679,12 +1705,12 @@ function compare(profile, record, opts) {
   const ranked = rankable.slice().sort((a, b) => a.score - b.score || record.sizes.indexOf(a.size) - record.sizes.indexOf(b.size));
   ranked.forEach((s, i) => { s.rank = i + 1; });
   const closest = ranked[0];
-  const second = ranked[1] || null;
   const complete = dims.length === COMPARE_DIMS.length;
   const enough = enoughToRecommend(dims);
 
-  /* how far to trust it, from the data alone */
-  const caveats = [];
+  /* how far to trust it, from the data alone — the part no choice of size changes */
+  const baseCaveats = [];
+  const caveats = baseCaveats;
   let reliability = complete ? 'high' : enough ? 'medium' : 'low';
   if (!complete) caveats.push(`Compared on ${dims.map((d) => DIM_NAMES[d]).join(', ')} only — ${skipped.map((x) => `${DIM_NAMES[x.dim]}: ${x.why}`).join('; ')}.`);
   if (ref.measured) { reliability = capAt(reliability, 'medium'); caveats.push('Your reference was measured at home; a quarter inch either way changes the comparison.'); }
@@ -1702,62 +1728,84 @@ function compare(profile, record, opts) {
   if (dims.some((d) => used[d].estimated)) { reliability = capAt(reliability, 'medium'); caveats.push('Some differences rest on a worked-out value, not a published one.'); }
   if (found.crossCategory) { reliability = lower(reliability); caveats.push(`Your reference is a ${CATEGORY_WORDS[found.category]}, and this is a ${CATEGORY_WORDS[record.category]}.`); }
   if (favorite.answer === 'close') { reliability = lower(reliability); caveats.push('You said your reference is close to the fit you like, not exactly it.'); }
-  const nearTie = second && second.score - closest.score < TIE_MARGIN;
-  if (nearTie) { reliability = lower(reliability); caveats.push(`${closest.size} and ${second.size} are about as close as each other.`); }
-  if (ref.product && !sizingSchema.isVerified(ref.record)) caveats.push(`The measurements used for your ${ref.record.brand} reference haven't been checked yet.`);
-  /* the closest size by the total can still be off on a measurement: each
-     one further than its tolerance is a trade-off, listed, never folded
-     into the total unsaid */
-  const tradeoffs = dims.filter((d) => !closest.dimensions[d].withinTolerance).map((d) => {
-    const x = closest.dimensions[d];
-    return { size: closest.size, dim: d, difference: x.difference, tolerance: x.tolerance, words: x.words };
-  });
-  if (tradeoffs.length) caveats.push(`${closest.size} differs from your reference by more than Fynd treats as similar on ${listWords(tradeoffs.map((t) => DIM_NAMES[t.dim]))}.`);
-  caveats.push('Matching measurements don\'t guarantee the same fit or feel: fabric, stretch and cut change how a garment wears.');
-
+  const baseReliability = reliability;
   /* an item the shopper entered is theirs to compare, like their reference — never called verified */
   const verified = checkedOrEntered(record);
-  /* closest is not the same as close: when every measurement compared
-     misses its tolerance, the size is shown, never recommended */
-  const allOutside = tradeoffs.length === dims.length;
-  /* (too few never reaches here: compare() stopped before any difference) */
-  const withheld = !verified ? 'unverified' : allOutside ? 'outside-tolerance' : null;
-  const recommended = withheld ? null : closest.size;
   const named = listWords(dims.map((d) => DIM_NAMES[d]));
-  const summary = recommended
-    /* one size entered by hand: it meets the criteria — it isn't "the closest" of others */
-    ? (isShopperEntered(record) ? `Size ${recommended} meets Fynd’s comparison criteria against your reference on ${named}.` : `${recommended} is the closest to your reference across ${named}.`)
-    : withheld === 'unverified'
-      ? `${closest.size} is the closest on ${named}, but this product's measurements haven't been checked, so it isn't a recommendation.`
-      : `${closest.size} is the closest size, but its ${named} all differ from your reference by more than Fynd treats as similar, so it isn't a recommendation.`;
 
-  return {
-    status: recommended ? 'ok' : 'partial',
-    productId: record.id,
-    product: { brand: record.brand, name: record.product.name, category: record.category, url: record.product.url },
-    unit,
-    reference,
-    recommended,
-    /* why there is no recommendation: "unverified" (the evaluation suite
-       only) or "outside-tolerance"; null when there is one */
-    withheld,
-    closest: closest.size,
-    alternative: nearTie ? second.size : null,
-    tradeoffs,
-    summary,
-    reliability,
-    dimensionsCompared: dims,
-    notCompared: skipped,
-    sizes: record.sizes.map((s) => sizes.find((x) => x.size === s)).filter(Boolean),
-    priorities: (favorite.likes || []).filter((l) => LIKE_DIMS[l]),
-    context: { product: productContext, reference: reference.context },
-    method: 'Each size is scored by how far its measurements are from your reference, dimension by dimension — chest counts most, then lengths, then shoulders, and whatever you said matters most counts double. Only measurements taken the same way are compared.',
-    caveats,
-    notes,
-    dataStatus: isShopperEntered(record) ? SHOPPER_ENTERED : sizingSchema.isVerified(record) ? 'verified' : 'unverified',
-    /* for a shopper-entered item: where its numbers came from, so a page says it the same way */
-    enteredFrom: isShopperEntered(record) ? enteredFrom(record) : null
+  /* One ranked size described: the top-ranked (closest) unless pick names
+     another. Everything above is the same for every size; from here on,
+     each rule is the one that has always described the closest size,
+     applied to the size described. */
+  const describe = (pick) => {
+    const chosen = pick === undefined || pick === null ? closest : ranked.find((s) => s.size === pick);
+    if (!chosen) throw new RangeError(`compare(): "${pick}" is not one of the ranked sizes (${ranked.map((s) => s.size).join(', ')}).`);
+    const picked = chosen !== closest;
+    /* the sizes ranked closer than the one described: none, unless picked */
+    const above = ranked.slice(0, ranked.indexOf(chosen)).map((s) => s.size);
+    const next = ranked[ranked.indexOf(chosen) + 1] || null;
+    const caveats = baseCaveats.slice();
+    let reliability = baseReliability;
+    const nearTie = next && next.score - chosen.score < TIE_MARGIN;
+    if (nearTie) { reliability = lower(reliability); caveats.push(`${chosen.size} and ${next.size} are about as close as each other.`); }
+    if (ref.product && !sizingSchema.isVerified(ref.record)) caveats.push(`The measurements used for your ${ref.record.brand} reference haven't been checked yet.`);
+    /* the size by the total can still be off on a measurement: each
+       one further than its tolerance is a trade-off, listed, never folded
+       into the total unsaid */
+    const tradeoffs = dims.filter((d) => !chosen.dimensions[d].withinTolerance).map((d) => {
+      const x = chosen.dimensions[d];
+      return { size: chosen.size, dim: d, difference: x.difference, tolerance: x.tolerance, words: x.words };
+    });
+    if (tradeoffs.length) caveats.push(`${chosen.size} differs from your reference by more than Fynd treats as similar on ${listWords(tradeoffs.map((t) => DIM_NAMES[t.dim]))}.`);
+    caveats.push('Matching measurements don\'t guarantee the same fit or feel: fabric, stretch and cut change how a garment wears.');
+
+    /* closest is not the same as close: when every measurement compared
+       misses its tolerance, the size is shown, never recommended */
+    const allOutside = tradeoffs.length === dims.length;
+    /* (too few never reaches here: compare() stopped before any difference) */
+    const withheld = !verified ? 'unverified' : allOutside ? 'outside-tolerance' : null;
+    const recommended = withheld ? null : chosen.size;
+    const closer = `${listWords(above)} ${above.length === 1 ? 'ranks' : 'rank'} closer overall, but ${above.length === 1 ? 'differs' : 'differ'} from your reference by more than Fynd’s comparison accepts on at least one measurement.`;
+    const summary = recommended && picked
+      /* a size below the top of the ranking, chosen because those above it fall outside the bands */
+      ? `${recommended} is the closest size to your reference across ${named} that meets Fynd’s comparison criteria. ${closer}`
+      : recommended
+        /* one size entered by hand: it meets the criteria — it isn't "the closest" of others */
+        ? (isShopperEntered(record) ? `Size ${recommended} meets Fynd’s comparison criteria against your reference on ${named}.` : `${recommended} is the closest to your reference across ${named}.`)
+        : withheld === 'unverified'
+          ? `${chosen.size} is the closest on ${named}, but this product's measurements haven't been checked, so it isn't a recommendation.`
+          : `${chosen.size} is the closest size, but its ${named} all differ from your reference by more than Fynd treats as similar, so it isn't a recommendation.`;
+
+    return {
+      status: recommended ? 'ok' : 'partial',
+      productId: record.id,
+      product: { brand: record.brand, name: record.product.name, category: record.category, url: record.product.url },
+      unit,
+      reference,
+      recommended,
+      /* why there is no recommendation: "unverified" (the evaluation suite
+         only) or "outside-tolerance"; null when there is one */
+      withheld,
+      /* always rank 1, whichever size is described */
+      closest: closest.size,
+      alternative: nearTie ? next.size : null,
+      tradeoffs,
+      summary,
+      reliability,
+      dimensionsCompared: dims,
+      notCompared: skipped,
+      sizes: record.sizes.map((s) => sizes.find((x) => x.size === s)).filter(Boolean),
+      priorities: (favorite.likes || []).filter((l) => LIKE_DIMS[l]),
+      context: { product: productContext, reference: reference.context },
+      method: 'Each size is scored by how far its measurements are from your reference, dimension by dimension — chest counts most, then lengths, then shoulders, and whatever you said matters most counts double. Only measurements taken the same way are compared.',
+      caveats,
+      notes,
+      dataStatus: isShopperEntered(record) ? SHOPPER_ENTERED : sizingSchema.isVerified(record) ? 'verified' : 'unverified',
+      /* for a shopper-entered item: where its numbers came from, so a page says it the same way */
+      enteredFrom: isShopperEntered(record) ? enteredFrom(record) : null
+    };
   };
+  return { result: describe(), describe };
 }
 
 /* ---------------------------------------------------------
@@ -1862,7 +1910,7 @@ function validate(profile, record, opts) {
   };
 }
 
-module.exports = { candidateRecord, isShopperEntered, readableRecord, SHOPPER_ENTERED, recommend, compare, validate, matchProduct, CATEGORY_PARAMS, FAMILY, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, METHOD_WORDS, sizeOffset, bodyRange, contextOf };
+module.exports = { candidateRecord, isShopperEntered, readableRecord, SHOPPER_ENTERED, recommend, compare, rankedComparison, validate, matchProduct, CATEGORY_PARAMS, FAMILY, TROUBLE_FACTOR, ALTERNATIVE_MARGIN, METHOD_WORDS, sizeOffset, bodyRange, contextOf };
 /* read by ./select-measurements.js, which chooses a saved garment's measurements for a chart: the same reference and the same eligibility rule */
 module.exports.referenceEntry = referenceEntry;
 module.exports.enoughToRecommend = enoughToRecommend;

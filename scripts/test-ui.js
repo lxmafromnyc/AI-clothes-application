@@ -3192,7 +3192,9 @@ const openFallbacks = (target) => target.addInitScript(() => {
     const reference = Object.assign(Schema.empty(), { garments: { sweatshirts: Object.assign(Schema.emptyGarment('sweatshirts'), { favorite: 'perfect', line: 'men', anchor: { brand: 'UNIQLO', size: 'M', product: { name: null, url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } } }) } });
     const table = (sizes) => X.asCheckedCopy(X.everlaneRecord(X.everlanePublished(Object.assign({}, X.EVERLANE_PUBLISHED, { sizes })), IF_STATED));
     const base = X.EVERLANE_PUBLISHED.sizes;
-    const narrowS = Object.assign({}, base, { S: Object.assign({}, base.S, { chest_circumference: '43' }) });
+    /* M's length 1¼ in longer than the reference: past its tolerance (a trade-off), inside the
+       engine's 1½ in "slightly long" band — Everlane's published M, 3 in longer, is "too long" */
+    const narrowS = Object.assign({}, base, { S: Object.assign({}, base.S, { chest_circumference: '43' }), M: Object.assign({}, base.M, { body_length: '28' }) });
     const noShoulders = Object.fromEntries(Object.entries(base).map(([k, { shoulder_width: _, ...row }]) => [k, row]));
     /* each comparison beside its decision, as the server sends them: the
        decision on the same reference, record and unit is the authority */
@@ -3229,7 +3231,7 @@ const openFallbacks = (target) => target.addInitScript(() => {
       assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'recommended');
       assert.strictEqual((await page.textContent('#fit-compare .fit-compare-recommended')).trim(), 'Recommended size: M');
       assert.strictEqual(await page.textContent('#fit-compare .fit-compare-tradeoffs-title'), 'Where size M still differs');
-      assert.deepStrictEqual(await page.$$eval('#fit-compare .fit-compare-tradeoffs li', (ls) => ls.map((l) => [l.dataset.dim, l.dataset.difference, l.textContent])), [['bodyLength', '3', 'Body length: 3 in longer — Fynd treats up to 1 in as similar']]);
+      assert.deepStrictEqual(await page.$$eval('#fit-compare .fit-compare-tradeoffs li', (ls) => ls.map((l) => [l.dataset.dim, l.dataset.difference, l.textContent])), [['bodyLength', '1.25', 'Body length: 1¼ in longer — Fynd treats up to 1 in as similar']]);
       assert.strictEqual(await page.textContent('#fit-compare .fit-compare-tradeoffs-note'), '“Similar” uses Fynd’s working tolerances, not tested fit limits.');
       /* the scale as data: within tolerance on chest and shoulders, the length it misses longer — and not called similar */
       const rows = await page.$$eval('#fit-compare .ff-scale-row', (ls) => ls.map((l) => [l.dataset.dim, l.dataset.similar]));

@@ -310,6 +310,32 @@ const TEE = { unit: 'in', chestWidth: 21.5, bodyLength: 29 };
     await close();
   });
 
+  await test('W2: the top-ranked size is outside a band, the next is inside every one — the panel recommends the next, says why, and still shows the ranking as the engine made it', async () => {
+    /* beside this chart, L ranks first but is 4 cm (1.57 in) longer in the body than this garment — past the 1.5 in band;
+       M ranks second (a near tie with L) and is inside every band. Fynd's real handler decides. */
+    await signIn({ hoodies: { unit: 'cm', chestWidth: 57, bodyLength: 64, shoulderWidth: 49.5, sleeveLength: 62.5 } });
+    const { panel, close } = await open('variants-hoodie.html');
+    await toReview(panel);
+    const before = hits.length;
+    await toResults(panel);
+    await view(panel, 'results');
+    assert.strictEqual(await text(panel, '#result-title'), 'The size that meets Fynd’s comparison criteria');
+    assert.strictEqual(await text(panel, '#result-size'), 'M');
+    /* every size as ranked, the answer marked: L is still #1, M is the one recommended */
+    const rows = await panel.$$eval('#result-table tr[data-size]', (ns) => ns.map((r) => [r.dataset.size, r.dataset.pick || '', r.lastElementChild.textContent]));
+    assert.deepStrictEqual(rows, [['S', '', '#4'], ['M', 'recommended', '#2'], ['L', '', '#1'], ['XL', '', '#3']]);
+    /* why: M meets the criteria; L ranks closer but is outside them */
+    const said = (await texts(panel, '#result-messages p')).join(' ');
+    assert.match(said, /^M is the closest size to your reference across chest, length, shoulders and sleeves that meets Fynd’s comparison criteria\. L ranks closer overall, but differs from your reference by more than Fynd’s comparison accepts on at least one measurement\.$/);
+    /* M's own confidence and caveats — never lowered for L, never about L */
+    assert.match(await text(panel, '#result-reliability'), /^Reliability: medium — /);
+    const caveats = await texts(panel, '#result-caveats li');
+    assert.ok(caveats.some((x) => x.startsWith('M differs from your reference')) && !caveats.some((x) => /^L (differs|and)/.test(x)), JSON.stringify(caveats));
+    /* one comparison request, as ever */
+    assert.deepStrictEqual(hits.slice(before).filter((h) => h.method === 'POST').map((h) => h.path + h.search), ['/api/size-recommendation?compare=1&candidate=1']);
+    await close();
+  });
+
   await test('after a purchase: “Bought it?” keeps how it fit — on the fit profile’s own feedback, with this page’s product, the size bought and the saved garment compared', async () => {
     const user = await signIn({ hoodies: HOODIE });
     const { panel, close } = await open('variants-hoodie.html');

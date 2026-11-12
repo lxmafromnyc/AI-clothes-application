@@ -450,6 +450,295 @@ function holdsContract(d) {
     });
   });
 
+  /* W1: every compared measurement of the closest size, not just the chest, is held to the
+     engine's own reference band for it (fitBands.reference[dim].slight: length and sleeves
+     1½ in, shoulders 1 in) — no new threshold */
+  const OWN = { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', sleeveLength: 'shoulder-seam-to-cuff', shoulderWidth: 'seam-to-seam' };
+  const REF_IN = { chestWidth: 22, bodyLength: 27, sleeveLength: 24, shoulderWidth: 20 };
+  const entered = (sizes, unit, methods) => engine.candidateRecord({ type: 'hoodies', brand: 'Example', unit: unit || 'in', methods: methods || OWN, sizes });
+
+  await test('8  W1: chest exact, body 2½ in and sleeves 3 in too short — compare() still ranks M first; the decision is NO_MATCH, each miss said', () => {
+    const profile = referenceProfile(REF_IN, 'in');
+    const one = entered([{ size: 'M', measurements: { chestWidth: 22, bodyLength: 24.5, sleeveLength: 21, shoulderWidth: 20 } }]);
+    const c = engine.compare(profile, one);
+    /* the engine's ranking and status are unchanged: only the decision's acceptance */
+    assert.deepStrictEqual([c.status, c.recommended], ['ok', 'M']);
+    const d = decision.decide(profile, one);
+    holdsContract(d);
+    assert.deepStrictEqual([d.outcome, d.size, d.closest, d.confidence], [NO_MATCH, null, 'M', null]);
+    assert.deepStrictEqual(d.reasons.map((r) => [r.code, r.dim, r.differenceIn, r.acceptableWithinIn]),
+      [['measurement-outside-acceptable-range', 'bodyLength', -2.5, 1.5], ['measurement-outside-acceptable-range', 'sleeveLength', -3, 1.5]]);
+    assert.ok(!codes(d).includes('chest-outside-acceptable-range'), 'the chest itself is fine');
+    /* the shopper reads which way and where, for the one size they entered */
+    assert.deepStrictEqual(d.messages, [
+      'Size M would be much shorter in the body than your garment — more than Fynd’s comparison allows — so it isn’t recommended.',
+      'Size M would be much shorter in the sleeves than your garment — more than Fynd’s comparison allows — so it isn’t recommended.'
+    ]);
+    /* and for a catalogue product, the closest of its sizes */
+    assert.strictEqual(decision.customerMessage({ code: 'measurement-outside-acceptable-range', size: 'L', dim: 'shoulderWidth', differenceIn: 1.2 }, { brand: 'Zara' }),
+      'Even the closest size, size L, would be much wider across the shoulders than the garment you compared it with, so Fynd isn’t suggesting a size for this product.');
+    /* the same misses entered in centimetres: normalised to inches before the band */
+    const cm = entered([{ size: 'M', measurements: { chestWidth: 55.88, bodyLength: 62.23, sleeveLength: 53.34, shoulderWidth: 50.8 } }], 'cm');
+    const dCm = decision.decide(profile, cm);
+    assert.deepStrictEqual([dCm.outcome, dCm.reasons.map((r) => [r.dim, r.differenceIn])], [NO_MATCH, [['bodyLength', -2.5], ['sleeveLength', -3]]]);
+  });
+
+  await test('8  W1: a size inside every band keeps its answer — OK, up to and including the band\'s own edge', () => {
+    const profile = referenceProfile(REF_IN, 'in');
+    /* length and sleeves past their tolerance (trade-offs), inside 1½ in; shoulders exactly at 1 in */
+    const inside = entered([{ size: 'M', measurements: { chestWidth: 22.5, bodyLength: 25.5, sleeveLength: 25.5, shoulderWidth: 21 } }]);
+    const d = decision.decide(profile, inside);
+    holdsContract(d);
+    assert.deepStrictEqual([d.outcome, d.size, d.confidence, codes(d)], [OK, 'M', engine.compare(profile, inside).reliability, []]);
+    /* a whole chart: the closest size within its bands is still the answer */
+    const chart = entered([
+      { size: 'S', measurements: { chestWidth: 20, bodyLength: 26, sleeveLength: 23, shoulderWidth: 19 } },
+      { size: 'M', measurements: { chestWidth: 22, bodyLength: 27.5, sleeveLength: 24.5, shoulderWidth: 20 } },
+      { size: 'L', measurements: { chestWidth: 24, bodyLength: 28.5, sleeveLength: 25.5, shoulderWidth: 21 } }
+    ]);
+    const dc = decision.decide(profile, chart);
+    assert.deepStrictEqual([dc.outcome, dc.size], [OK, 'M']);
+  });
+
+  await test('8  W1: a measurement not compared (method not stated, or another method) is never held to a band — the existing rules decide', () => {
+    const profile = referenceProfile(REF_IN, 'in');
+    const short = { chestWidth: 22, bodyLength: 27, sleeveLength: 21, shoulderWidth: 20 };
+    /* sleeves 3 in short, but by a method not stated: left out, three still compared — OK */
+    const unstated = decision.decide(profile, entered([{ size: 'M', measurements: short }], 'in', Object.assign({}, OWN, { sleeveLength: 'not-stated' })));
+    holdsContract(unstated);
+    assert.deepStrictEqual([unstated.outcome, unstated.size], [OK, 'M']);
+    assert.ok(unstated.qualifiers.some((q) => q.code === 'optional-measurement-not-compared' && q.dim === 'sleeveLength'));
+    /* from the centre back on the chart, from the seam on the reference: incompatible, not compared */
+    const other = decision.decide(profile, entered([{ size: 'M', measurements: Object.assign({}, short, { sleeveLength: 30 }) }], 'in', Object.assign({}, OWN, { sleeveLength: 'center-back-to-cuff' })));
+    assert.deepStrictEqual([other.outcome, other.size], [OK, 'M']);
+    /* too few compared: INSUFFICIENT_DATA as before, never NO_MATCH from a band */
+    const few = decision.decide(profile, entered([{ size: 'M', measurements: { chestWidth: 22, bodyLength: 20 } }]));
+    holdsContract(few);
+    assert.strictEqual(few.outcome, INSUFFICIENT_DATA);
+    assert.ok(!codes(few).includes('measurement-outside-acceptable-range'));
+  });
+
+  await test('8  W1: each band is decided on the unrounded difference in inches — the edge accepted, just past it refused, either sign, the same in inches, centimetres and mixed units', () => {
+    const toCm = (m) => Object.fromEntries(Object.entries(m).map(([k, v]) => [k, v * 2.54]));
+    /* each dimension's band as the reference form measures it: chest 3 in around is 1½ in flat */
+    const BANDS = { chestWidth: 1.5, bodyLength: 1.5, sleeveLength: 1.5, shoulderWidth: 1 };
+    /* 0.003 in past the edge rounds back onto it in inches (0.01) — the case display rounding got wrong */
+    const CASES = [[0, OK], [0.003, NO_MATCH], [0.01, NO_MATCH]];
+    let checked = 0;
+    Object.entries(BANDS).forEach(([d, edge]) => [1, -1].forEach((sign) => CASES.forEach(([past, expected]) => {
+      const item = Object.assign({}, REF_IN, { [d]: REF_IN[d] + sign * (edge + past) });
+      const label = `${d} ${sign > 0 ? '+' : '-'}${edge + past}`;
+      const setups = {
+        'in, shown in': [referenceProfile(REF_IN, 'in'), entered([{ size: 'M', measurements: item }]), {}],
+        'in, shown cm': [referenceProfile(REF_IN, 'in'), entered([{ size: 'M', measurements: item }]), { unit: 'cm' }],
+        'cm, shown cm': [referenceProfile(toCm(REF_IN), 'cm'), entered([{ size: 'M', measurements: toCm(item) }], 'cm'), {}],
+        'cm, shown in': [referenceProfile(toCm(REF_IN), 'cm'), entered([{ size: 'M', measurements: toCm(item) }], 'cm'), { unit: 'in' }],
+        'reference in, item cm': [referenceProfile(REF_IN, 'in'), entered([{ size: 'M', measurements: toCm(item) }], 'cm'), {}],
+        'reference cm, item in': [referenceProfile(toCm(REF_IN), 'cm'), entered([{ size: 'M', measurements: item }]), {}]
+      };
+      Object.entries(setups).forEach(([how, [profile, record, opts]]) => {
+        const d1 = decision.decide(profile, record, opts);
+        holdsContract(d1);
+        assert.strictEqual(d1.outcome, expected, `${label} [${how}]: ${d1.outcome} ${JSON.stringify(d1.reasons)}`);
+        checked += 1;
+      });
+    })));
+    assert.strictEqual(checked, 4 * 2 * 3 * 6);
+    /* a chest the item publishes all the way around: the reference's flat width × 2 (the stated
+       conversion), the same 3 in band around — at the edge, and 0.006 in around past it */
+    const around = (v) => entered([{ size: 'M', measurements: Object.assign({}, REF_IN, { chestWidth: v }) }], 'in', Object.assign({}, OWN, { chestWidth: 'garment-circumference' }));
+    const profile = referenceProfile(REF_IN, 'in');
+    [[47, OK], [41, OK], [47.006, NO_MATCH], [40.994, NO_MATCH]].forEach(([v, expected]) => ['in', 'cm'].forEach((unit) => {
+      assert.strictEqual(decision.decide(profile, around(v), { unit }).outcome, expected, `chest ${v} around, shown ${unit}`);
+    }));
+    /* the reason's figure is still the rounded one a page shows */
+    const past = decision.decide(profile, entered([{ size: 'M', measurements: Object.assign({}, REF_IN, { bodyLength: REF_IN.bodyLength + 1.503 }) }]), { unit: 'cm' });
+    assert.deepStrictEqual(past.reasons.map((r) => [r.code, r.dim, r.differenceIn, r.acceptableWithinIn]), [['measurement-outside-acceptable-range', 'bodyLength', 1.5, 1.5]]);
+  });
+
+  /* W2: when the top-ranked size isn't acceptable, the next acceptable size in the engine's own
+     ranking is the answer — described by the engine for that size (compare's pick), from one
+     ranking; NO_MATCH only when no ranked size is acceptable */
+  const row = (chestWidth, bodyLength, sleeveLength, shoulderWidth) => ({ chestWidth, bodyLength, sleeveLength, shoulderWidth });
+  /* S: chest 1.3 in narrower flat (2.6 in around, inside 3 in); M: chest exact, length 1.6 in short (outside 1.5 in) */
+  const W2_S = row(20.7, 27, 24, 20);
+  const W2_M = row(22, 25.4, 24, 20);
+  const W2_L = row(24, 28, 25, 21);
+  const ranks = (c) => Object.fromEntries(c.sizes.map((s) => [s.size, [s.rank || null, s.score]]));
+
+  await test('8  W2: M ranks first but is 1.6 in short in the body; S, ranked second, is inside every band — OK, S, described as S, M still rank 1', () => {
+    const profile = referenceProfile(REF_IN, 'in');
+    const chart = entered([{ size: 'S', measurements: W2_S }, { size: 'M', measurements: W2_M }, { size: 'L', measurements: W2_L }]);
+    const plain = engine.compare(profile, chart);
+    assert.deepStrictEqual([plain.closest, plain.recommended], ['M', 'M']);
+    const { decision: d, detail } = decision.decideWithDetail(profile, chart);
+    holdsContract(d);
+    assert.deepStrictEqual([d.outcome, d.size, d.closest, codes(d)], [OK, 'S', null, []]);
+    /* why M was passed over, as data */
+    const over = d.qualifiers.filter((q) => q.code === 'higher-ranked-size-outside-range');
+    assert.deepStrictEqual(over, [{ code: 'higher-ranked-size-outside-range', size: 'M', because: ['measurement-outside-acceptable-range'], dims: ['bodyLength'] }]);
+    /* the comparison the decision rests on describes S: its summary, trade-offs and caveats */
+    const c = detail.compare;
+    assert.deepStrictEqual([c.status, c.recommended, c.closest], ['ok', 'S', 'M']);
+    assert.match(c.summary, /^S is the closest size to your reference across chest, length, shoulders and sleeves that meets Fynd’s comparison criteria\. M ranks closer overall/);
+    assert.ok(c.tradeoffs.every((t) => t.size === 'S') && c.tradeoffs.map((t) => t.dim).join() === 'chestWidth', JSON.stringify(c.tradeoffs));
+    assert.ok(c.caveats.some((x) => x.startsWith('S differs from your reference')) && !c.caveats.some((x) => /^M (differs|and)/.test(x)), JSON.stringify(c.caveats));
+    /* scores, ranks and access to rank 1 are the engine's own, unchanged by the pick */
+    assert.deepStrictEqual(ranks(c), ranks(plain));
+    assert.deepStrictEqual(ranks(c), { S: [2, 1.69], M: [1, 1.536], L: [3, 6.2] });
+    /* the same as asking the engine for S directly */
+    assert.deepStrictEqual(c, engine.compare(profile, chart, { pick: 'S' }));
+    /* through decide() too, and in centimetres */
+    assert.strictEqual(decision.decide(profile, chart).size, 'S');
+    assert.strictEqual(decision.decide(profile, chart, { unit: 'cm' }).size, 'S');
+    /* the shopper's words for the qualifier */
+    assert.strictEqual(decision.customerMessage(over[0]), 'Size M ranks closer overall, but differs from the garment you compared it with by more than Fynd’s comparison accepts on at least one measurement, so it isn’t the size suggested.');
+  });
+
+  await test('8  W2: rank order, not chart order — two acceptable sizes below a failing rank 1: the better-ranked one, wherever the chart lists it', () => {
+    const profile = referenceProfile(REF_IN, 'in');
+    /* listed S, M, L; ranked M (fails), L (chest 1.3 in narrower), S (chest 1.4 in wider) */
+    const chart = entered([{ size: 'S', measurements: row(23.4, 27, 24, 20) }, { size: 'M', measurements: W2_M }, { size: 'L', measurements: row(20.7, 27, 24, 20) }]);
+    const c = engine.compare(profile, chart);
+    assert.deepStrictEqual(ranks(c), { S: [3, 1.96], M: [1, 1.536], L: [2, 1.69] });
+    const d = decision.decide(profile, chart);
+    assert.deepStrictEqual([d.outcome, d.size], [OK, 'L']);
+    /* only sizes ranked above the answer are named as passed over */
+    assert.deepStrictEqual(d.qualifiers.filter((q) => q.code === 'higher-ranked-size-outside-range').map((q) => q.size), ['M']);
+    /* two failing above it (L 1.51 in short, M 1.6 in short in the body): both named, in rank order */
+    const two = entered([{ size: 'S', measurements: W2_S }, { size: 'M', measurements: W2_M }, { size: 'L', measurements: row(22, 25.49, 24, 20) }]);
+    const ranked = engine.compare(profile, two).sizes.slice().sort((a, b) => a.rank - b.rank).map((s) => s.size);
+    assert.deepStrictEqual(ranked, ['L', 'M', 'S']);
+    const d2 = decision.decide(profile, two);
+    assert.deepStrictEqual([d2.outcome, d2.size, d2.qualifiers.filter((q) => q.code === 'higher-ranked-size-outside-range').map((q) => [q.size, q.dims])], [OK, 'S', [['L', ['bodyLength']], ['M', ['bodyLength']]]]);
+  });
+
+  await test('8  W2: a tie in score is broken as the engine breaks it — the chart\'s order — and the tied size is named as the alternative only because it is acceptable too', () => {
+    const profile = referenceProfile(REF_IN, 'in');
+    const narrow = row(20.7, 27, 24, 20);
+    const wide = row(23.3, 27, 24, 20);
+    /* the two acceptable sizes score the same (chest 1.3 in either way) */
+    const first = entered([{ size: 'S', measurements: narrow }, { size: 'M', measurements: W2_M }, { size: 'L', measurements: wide }]);
+    const c = engine.compare(profile, first);
+    assert.strictEqual(c.sizes.find((s) => s.size === 'S').score, c.sizes.find((s) => s.size === 'L').score);
+    const d = decision.decide(profile, first);
+    assert.deepStrictEqual([d.outcome, d.size, d.alternative], [OK, 'S', 'L']);
+    /* listed the other way round, the other one wins: the chart's order, nothing else */
+    const second = entered([{ size: 'L', measurements: wide }, { size: 'M', measurements: W2_M }, { size: 'S', measurements: narrow }]);
+    const d2 = decision.decide(profile, second);
+    assert.deepStrictEqual([d2.outcome, d2.size, d2.alternative], [OK, 'L', 'S']);
+  });
+
+  await test('8  W2: confidence is the engine\'s own for the size given — never lowered for being below rank 1', () => {
+    const profile = referenceProfile(REF_IN, 'in');
+    const chart = entered([{ size: 'S', measurements: W2_S }, { size: 'M', measurements: W2_M }, { size: 'L', measurements: W2_L }]);
+    const { decision: d, detail } = decision.decideWithDetail(profile, chart);
+    /* rank 1 is in a near tie with S, which lowers M's own reliability; S's next (L) is far behind */
+    assert.strictEqual(engine.compare(profile, chart).reliability, 'low');
+    assert.deepStrictEqual([d.size, d.confidence, detail.compare.reliability], ['S', 'medium', 'medium']);
+    /* the same as S entered alone, where it is rank 1: the size's evidence, not its rank */
+    const alone = decision.decide(profile, entered([{ size: 'S', measurements: W2_S }]));
+    assert.deepStrictEqual([alone.outcome, alone.size, alone.confidence], [OK, 'S', d.confidence]);
+    /* and a near tie below the answer lowers it, by the engine's existing rule */
+    const tied = decision.decide(profile, entered([{ size: 'S', measurements: W2_S }, { size: 'M', measurements: W2_M }, { size: 'L', measurements: row(23.3, 27, 24, 20) }]));
+    assert.deepStrictEqual([tied.size, tied.confidence], ['S', 'low']);
+  });
+
+  await test('8  W2: no ranked size is acceptable — NO_MATCH, closest still rank 1 with its own reasons; an unranked size is never the answer', () => {
+    const profile = referenceProfile(REF_IN, 'in');
+    /* M: length and sleeves short; L: chest 2 in wider flat (4 in around); S: chest 2 in narrower */
+    const chart = entered([{ size: 'S', measurements: row(20, 27, 24, 20) }, { size: 'M', measurements: row(22, 24.5, 21, 20) }, { size: 'L', measurements: row(24, 28, 25, 21) }]);
+    const { decision: d, detail } = decision.decideWithDetail(profile, chart);
+    holdsContract(d);
+    const plain = engine.compare(profile, chart);
+    assert.deepStrictEqual([d.outcome, d.size, d.closest], [NO_MATCH, null, plain.closest]);
+    assert.ok(d.reasons.every((r) => r.size === plain.closest), JSON.stringify(d.reasons));
+    assert.ok(!d.qualifiers.some((q) => q.code === 'higher-ranked-size-outside-range'));
+    /* the comparison is compare()'s own, unchanged */
+    assert.deepStrictEqual(detail.compare, plain);
+    /* a size missing a compared measurement isn't ranked, so never chosen, however close */
+    const gap = entered([{ size: 'S', measurements: { chestWidth: 22, bodyLength: 27, shoulderWidth: 20 } }, { size: 'M', measurements: W2_M }]);
+    const g = decision.decide(profile, gap);
+    assert.deepStrictEqual([g.outcome, g.closest], [NO_MATCH, 'M']);
+    assert.ok(g.qualifiers.some((q) => q.code === 'sizes-excluded-incomplete'));
+  });
+
+  await test('8  W2: an alternative is named only when it is acceptable too — beside an OK, never a size the bands refuse', () => {
+    const profile = referenceProfile(REF_IN, 'in');
+    /* M 1.5 in short in the body (the band's edge: accepted); S 1.6 in short (refused), within 0.2 of M's score */
+    const chart = entered([{ size: 'S', measurements: row(22, 25.4, 24, 20) }, { size: 'M', measurements: row(22, 25.5, 24, 20) }]);
+    const c = engine.compare(profile, chart);
+    assert.deepStrictEqual([c.recommended, c.alternative], ['M', 'S']);
+    const d = decision.decide(profile, chart);
+    assert.deepStrictEqual([d.outcome, d.size, d.alternative], [OK, 'M', null]);
+    /* the comparison sent beside it says the same */
+    assert.strictEqual(decision.heldComparison(c, d).alternative, null);
+    assert.strictEqual(decision.heldComparison(c, d).recommended, 'M');
+  });
+
+  await test('8  W2: compare() without pick is unchanged; pick is checked against the ranked sizes', () => {
+    const profile = referenceProfile(REF_IN, 'in');
+    const chart = entered([{ size: 'S', measurements: W2_S }, { size: 'M', measurements: W2_M }, { size: 'L', measurements: W2_L }]);
+    const plain = engine.compare(profile, chart);
+    /* unset, null, or the top-ranked size: the same answer */
+    assert.deepStrictEqual(engine.compare(profile, chart, { pick: null }), plain);
+    assert.deepStrictEqual(engine.compare(profile, chart, { pick: 'M' }), plain);
+    assert.deepStrictEqual(engine.rankedComparison(profile, chart).result, plain);
+    /* a pick that isn't a ranked size is an error, never a guess */
+    assert.throws(() => engine.compare(profile, chart, { pick: 'XXL' }), RangeError);
+    const gap = entered([{ size: 'S', measurements: { chestWidth: 22, bodyLength: 27, shoulderWidth: 20 } }, { size: 'M', measurements: W2_M }]);
+    assert.throws(() => engine.compare(profile, gap, { pick: 'S' }), /not one of the ranked sizes \(M\)/);
+    /* nothing ranked at all: nothing to describe */
+    const few = entered([{ size: 'M', measurements: { chestWidth: 22, bodyLength: 27 } }]);
+    assert.strictEqual(engine.compare(profile, few).status, 'insufficient');
+    assert.throws(() => engine.compare(profile, few, { pick: 'M' }), RangeError);
+    /* a catalogue record (checked in memory) is unchanged too */
+    asChecked([ZARA], () => {
+      const zara = sizing.byId(ZARA);
+      const ref = referenceProfile(rowOf(zara, 'S'));
+      assert.deepStrictEqual(engine.compare(ref, zara, { pick: undefined }), engine.compare(ref, zara));
+      assert.strictEqual(decision.decide(ref, zara).size, 'S');
+    });
+  });
+
+  await test('8  W2: a rejected size ranked above the answer never lowers its confidence — only the near-tie rule below it, as before', () => {
+    const profile = referenceProfile(REF_IN, 'in');
+    /* M (rank 1, fails) and S (rank 2, passes) are a near tie: 1.536 and 1.69 */
+    const chart = entered([{ size: 'S', measurements: W2_S }, { size: 'M', measurements: W2_M }, { size: 'L', measurements: W2_L }]);
+    const plain = engine.compare(profile, chart);
+    const sorted = plain.sizes.slice().sort((a, b) => a.rank - b.rank);
+    assert.ok(sorted[1].score - sorted[0].score < 0.2, 'M and S are within the near-tie margin');
+    /* the tie lowers M's own reliability in the default answer (rank 1 described) ... */
+    assert.ok(plain.caveats.includes('M and S are about as close as each other.'));
+    assert.strictEqual(plain.reliability, 'low');
+    /* ... but S's answer is never lowered by M, the size above it that was rejected */
+    const { decision: d, detail } = decision.decideWithDetail(profile, chart);
+    assert.deepStrictEqual([d.size, d.confidence], ['S', 'medium']);
+    assert.ok(!detail.compare.caveats.some((x) => /about as close/.test(x)), JSON.stringify(detail.compare.caveats));
+    /* the default answer is untouched by any of this */
+    assert.deepStrictEqual(engine.compare(profile, chart), plain);
+  });
+
+  await test('8  W2 in the search listings (sizeListing via fitFor): a catalogue product whose top-ranked size is outside a band lists the next acceptable size, never rank 1', () => {
+    asChecked([ZARA], () => {
+      const zara = sizing.byId(ZARA);
+      /* beside this garment, S ranks first but is 4.5 cm (1.77 in) shorter in the body; M is inside every band */
+      const profile = referenceProfile({ chestWidth: 63.5, bodyLength: 70, shoulderWidth: 55.5, sleeveLength: 64 });
+      const plain = engine.compare(profile, zara);
+      assert.strictEqual(plain.closest, 'S');
+      const { fitFor } = require('../api/size-recommendation');
+      const item = fitFor(profile, 'hoodies', [{ brand: 'Zara', name: zara.product.name, url: zara.product.url }]).items[0];
+      assert.deepStrictEqual([item.status, item.by, item.resultType, item.size, item.decision.outcome, item.decision.size], ['ok', 'reference', 'garment-comparison', 'M', OK, 'M']);
+      /* the listing's words and confidence are M's own, from the comparison the decision rests on */
+      assert.match(item.summary, /^M is the closest size to your reference across .* that meets Fynd’s comparison criteria\. S ranks closer overall/);
+      assert.strictEqual(item.reliability, engine.compare(profile, zara, { pick: 'M' }).reliability);
+      assert.ok(!item.caveats.some((x) => /^S (differs|and)/.test(x)), JSON.stringify(item.caveats));
+      assert.deepStrictEqual(item.decision.qualifiers.filter((q) => q.code === 'higher-ranked-size-outside-range').map((q) => [q.size, q.dims]), [['S', ['bodyLength']]]);
+      /* the alternative listed is the decision's: named only when acceptable too */
+      assert.strictEqual(item.alternative, item.decision.alternative);
+    });
+  });
+
   await test('8  UNIQLO hoodie (checked), chest 24.5 in: even its smallest garment is far roomier than a true-to-size fit wants — NO_MATCH', () => {
     asChecked([UQ_HOODIE], () => {
       const d = decision.decide(chestProfile(24.5), sizing.byId(UQ_HOODIE));
