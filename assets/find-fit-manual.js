@@ -347,14 +347,14 @@
     const a = ref.garment.anchor || {};
     const garment = ref.source === 'saved' ? ['saved', ref.type]
       : ['visit', ref.type, a.product ? (a.product.url || a.product.name || null) : null, a.brand || null, a.size || null, a.measurements || null, a.alternates || null];
-    return JSON.stringify([id, item.type(), garment]);
+    return JSON.stringify([id, item.version ? item.version() : null, item.type(), garment]);
   }
   /* a garment typed by hand but not yet kept: the comparison keeps it first,
      by the form's own checks (keepTypedGarment) — its key is the item's until then */
   function typedKey() {
     const item = Item();
     const id = item && item.identity ? item.identity() : null;
-    return id ? JSON.stringify([id, item.type(), 'typed']) : null;
+    return id ? JSON.stringify([id, item.version ? item.version() : null, item.type(), 'typed']) : null;
   }
   function maybeCompare() {
     if (busy || !usingLink() || itemState() !== 'ready') return;

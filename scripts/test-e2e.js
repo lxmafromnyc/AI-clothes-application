@@ -1474,8 +1474,9 @@ const linkFromInbox = (pattern) => {
       const r = (id) => document.getElementById(id).getBoundingClientRect();
       return { ref: r('ff-step-reference'), item: r('ff-step-target'), flow: r('ff-form'), scroll: document.documentElement.scrollWidth - window.innerWidth };
     });
-    assert.ok(box.ref.top > box.item.bottom - 1, 'item, then garment');
-    assert.ok(box.flow.width <= 720 && box.flow.width >= 600, `a readable width (${box.flow.width})`);
+    /* a desktop: the item and the garment side by side, the item on the left */
+    assert.ok(Math.abs(box.ref.top - box.item.top) < 2 && box.ref.left >= box.item.right - 1, 'item and garment side by side');
+    assert.ok(box.flow.width <= 1100 && box.flow.width >= 960, `one workspace wide (${box.flow.width})`);
     assert.ok(box.scroll <= 0, 'no sideways scroll');
     /* the item by hand, opened: the size and measurements; the brand and name folded as optional */
     const labels = await page.$$eval('#ffc-form label.profile-label', (ls) => ls.filter((l) => !l.closest('#ffc-more')).map((l) => l.textContent.replace(/\s+/g, ' ').trim()));
@@ -1503,8 +1504,9 @@ const linkFromInbox = (pattern) => {
     assert.deepStrictEqual(await page.$$eval('#find-fit button[type="submit"]', (bs) => bs.map((b) => b.textContent.trim())), ['Compare sizes']);
     assert.strictEqual(await page.getAttribute('#ff-submit', 'aria-disabled'), 'true');
     assert.strictEqual(await page.textContent('#ff-submit-note'), 'Paste the item’s link, then find your garment.');
-    const geo = await page.evaluate(() => ({ button: document.getElementById('ff-submit').getBoundingClientRect(), ref: document.getElementById('ff-step-reference').getBoundingClientRect(), flow: document.getElementById('ff-form').getBoundingClientRect() }));
-    assert.ok(geo.button.top >= geo.ref.bottom && geo.button.top - geo.ref.bottom < 120, 'right under the cards');
+    /* side by side on a desktop: under whichever card ends lower */
+    const geo = await page.evaluate(() => ({ button: document.getElementById('ff-submit').getBoundingClientRect(), cards: Math.max(document.getElementById('ff-step-reference').getBoundingClientRect().bottom, document.getElementById('ff-step-target').getBoundingClientRect().bottom), flow: document.getElementById('ff-form').getBoundingClientRect() }));
+    assert.ok(geo.button.top >= geo.cards && geo.button.top - geo.cards < 120, 'right under the cards');
     assert.ok(geo.button.width >= geo.flow.width - 80, 'as wide as the card');
     /* no brand browser or catalogue on the page */
     assert.strictEqual(await page.$('#fit-url, #fit-browser, #fit-brands, #fit-brand-dialog, #ff-suggest, #ff-check, #ff-picked, #fit-link-alt, #ffc-type'), null);
@@ -1670,14 +1672,14 @@ const linkFromInbox = (pattern) => {
     await page.click('#ffr-pick .ffr-size-pill[data-size="M"]');
     await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit');
     assert.match(await page.textContent('.ff-ref--visit .ff-ref-name'), /UNIQLO · Sweat Pullover Hoodie/);
-    assert.match(await page.textContent('.ff-ref--visit .ff-ref-size'), /^Size M/);
+    assert.match(await page.textContent('.ff-ref--visit .ff-ref-size'), /^ — Size M/);
     /* Edit: the sizes again, M pressed; another size keeps it at once */
     await page.click('.ff-ref-edit');
     await page.waitForSelector('#ffr-pick .ffr-size-pill[aria-pressed="true"]');
     assert.strictEqual(await page.getAttribute('#ffr-pick .ffr-size-pill[aria-pressed="true"]', 'data-size'), 'M');
     await page.click('#ffr-pick .ffr-size-pill[data-size="L"]');
     await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit');
-    assert.match(await page.textContent('.ff-ref--visit .ff-ref-size'), /^Size L/);
+    assert.match(await page.textContent('.ff-ref--visit .ff-ref-size'), /^ — Size L/);
     await context.close();
   }));
 
@@ -1745,6 +1747,215 @@ const linkFromInbox = (pattern) => {
     await resultDone(page);
     assert.strictEqual(compares.length, 4);
     assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'recommended');
+    await context.close();
+  }));
+
+  /* ---------- the zero-friction workspace ---------- */
+  const SAVED_KEY = 'fynd_saved_garment_v1';
+  const pasteOnPage = (page, text) => page.evaluate((t) => {
+    if (document.activeElement && document.activeElement !== document.body) document.activeElement.blur();
+    const dt = new DataTransfer();
+    dt.setData('text/plain', t);
+    const e = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
+    document.body.dispatchEvent(e);
+    return e.defaultPrevented;
+  }, text);
+  const pasteInto = (page, selector, text) => page.evaluate(([sel, t]) => {
+    const n = document.querySelector(sel);
+    n.focus();
+    const dt = new DataTransfer();
+    dt.setData('text/plain', t);
+    const e = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
+    n.dispatchEvent(e);
+    return e.defaultPrevented;
+  }, [selector, text]);
+
+  await test('a desktop opens ready for a link: the box focused (a phone not), and a product link pasted anywhere on the page — never into a field — is looked up once', () => asChecked(UQ_PAIR, async () => {
+    const context = await openContext({ byHand: false });
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const charts = [];
+    page.on('request', (r) => { if (/size-recommendation\?chart=/.test(r.url())) charts.push(r.url()); });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference .ffr-form #ffr-search');
+    assert.strictEqual(await page.evaluate(() => document.activeElement.id), 'ffi-link', 'a desktop: the link box focused');
+    /* pasted into the garment search, a textarea or a contenteditable: theirs, untouched */
+    assert.strictEqual(await pasteInto(page, '#ffr-search', UQ_HOODIE_LINK), false);
+    await page.evaluate(() => {
+      const t = document.createElement('textarea'); t.id = 'test-ta'; document.body.append(t);
+      const c = document.createElement('div'); c.id = 'test-ce'; c.contentEditable = 'true'; document.body.append(c);
+    });
+    assert.strictEqual(await pasteInto(page, '#test-ta', UQ_HOODIE_LINK), false);
+    assert.strictEqual(await pasteInto(page, '#test-ce', UQ_HOODIE_LINK), false);
+    /* words that aren't one link: left alone */
+    assert.strictEqual(await pasteOnPage(page, 'a hoodie I like'), false);
+    assert.strictEqual(await pasteOnPage(page, `${UQ_HOODIE_LINK} and more`), false);
+    await page.waitForTimeout(800);
+    assert.deepStrictEqual(charts, [], 'nothing looked up');
+    assert.strictEqual(await page.inputValue('#ffi-link'), '');
+    /* a link pasted on the page itself: the link box filled and looked up — once, however often it is pasted */
+    assert.strictEqual(await pasteOnPage(page, `  ${UQ_HOODIE_LINK}\n`), true);
+    await pasteOnPage(page, UQ_HOODIE_LINK);
+    await page.waitForSelector('#ffi-found[data-state="automatic"]');
+    await pasteOnPage(page, UQ_HOODIE_LINK);
+    await page.waitForTimeout(900);
+    assert.strictEqual(await page.inputValue('#ffi-link'), UQ_HOODIE_LINK);
+    assert.strictEqual(charts.length, 1, 'one lookup');
+    /* the confirmation: checkmark, name, sizes, Edit — the figures behind View measurements */
+    assert.match(await page.textContent('#ffi-found .ffi-head'), /✓\s*UNIQLO · Sweat Pullover Hoodie\s*Edit/);
+    assert.ok((await page.$$eval('#ffi-found .ffi-sizes li', (ls) => ls.length)) > 0);
+    assert.strictEqual((await page.textContent('#ffi-details > summary')).trim(), 'View measurements');
+    assert.strictEqual(await page.$eval('#ffi-details', (d) => d.open), false);
+    /* another product pasted: that one, at once */
+    await pasteOnPage(page, 'https://www.uniqlo.com/us/en/products/E475377-000/00');
+    await page.waitForFunction(() => /Sweatshirt/.test((document.querySelector('#ffi-found .ffi-name') || {}).textContent || ''));
+    assert.strictEqual(charts.length, 2);
+    /* the page-wide listener is removed with the page */
+    await page.evaluate(() => window.FindFitItem.destroy());
+    await pasteOnPage(page, UQ_HOODIE_LINK);
+    await page.waitForTimeout(700);
+    assert.strictEqual(charts.length, 2, 'removed: nothing more looked up');
+    /* a phone: no focus taken */
+    const phone = await context.newPage();
+    await phone.setViewportSize({ width: 390, height: 844 });
+    await open(phone, 'index.html');
+    await phone.waitForSelector('#ff-reference .ffr-form');
+    assert.notStrictEqual(await phone.evaluate(() => document.activeElement.id), 'ffi-link', 'a narrow screen: no keyboard pushed up');
+    await context.close();
+  }));
+
+  await test('the garment remembered on this device: picked by keyboard, saved without measurements, restored next visit only after Fynd checks it again — then a pasted link is compared once; Remove forgets it', () => asChecked(UQ_PAIR, async () => {
+    const context = await openContext({ byHand: false });
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-reference .ffr-form #ffr-search');
+    /* found by keyboard: words, the arrow, Enter — then a size by the arrows and Enter */
+    await page.click('#ffr-search');
+    await page.keyboard.type('uniqlo sweatshirt');
+    await page.waitForSelector('#ffr-suggest-box[data-state="ready"] #ffr-suggest-0');
+    const firstName = await page.textContent('#ffr-suggest-0 .ff-suggest-name');
+    await page.keyboard.press('ArrowDown');
+    assert.strictEqual(await page.getAttribute('#ffr-search', 'aria-activedescendant'), 'ffr-suggest-0');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#ffr-pick[data-status="ready"] .ffr-size-pill');
+    assert.match(await page.inputValue('#ffr-search'), new RegExp(firstName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    await page.focus('#ffr-pick .ffr-size-pill[data-size="XS"]');
+    for (let i = 0; i < 3; i += 1) await page.keyboard.press('ArrowRight');
+    assert.strictEqual(await page.evaluate(() => document.activeElement.dataset.size), 'L');
+    await page.keyboard.press('ArrowLeft');
+    await page.keyboard.press('ArrowRight');
+    await page.keyboard.press('Enter');
+    await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit[data-remembered="true"]');
+    /* remembered: what identifies it and the size — never a measurement */
+    const saved = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), SAVED_KEY);
+    assert.deepStrictEqual(Object.keys(saved).sort(), ['brand', 'brandId', 'code', 'line', 'name', 'savedAt', 'size', 'type', 'url', 'v']);
+    assert.deepStrictEqual([saved.v, saved.url, saved.size, saved.type], [1, 'https://www.uniqlo.com/us/en/products/E475377-000/00', 'L', 'sweatshirts']);
+    assert.match(await page.textContent('.ff-ref--visit .ff-ref-name'), /✓\s*UNIQLO · Sweatshirt — Size L/);
+    assert.match(await page.textContent('.ff-ref--visit'), /Remembered on this device\. Not saved to an account\./);
+    assert.deepStrictEqual(await page.$$eval('.ff-ref--visit .ff-ref-actions button', (bs) => bs.map((b) => b.textContent)), ['Change', 'Remove']);
+    /* the next visit (a new tab: this tab's own memory empty) */
+    const next = await context.newPage();
+    await next.setViewportSize({ width: 1440, height: 900 });
+    const checks = [];
+    const compares = [];
+    next.on('request', (r) => {
+      if (/size-recommendation\?check=1/.test(r.url())) checks.push(r.url());
+      if (/[?&]compare=1/.test(r.url())) compares.push(r.url());
+    });
+    await open(next, 'index.html');
+    await next.waitForSelector('#ff-reference[data-restore="restored"] .ff-ref--visit[data-remembered="true"]');
+    assert.strictEqual(checks.length, 1, 'checked again with the server before it is used');
+    assert.match(await next.textContent('.ff-ref--visit .ff-ref-name'), /UNIQLO · Sweatshirt — Size L/);
+    assert.match(await next.textContent('.ff-ref--visit .ff-ref-held'), /Fynd holds checked garment measurements for this product/);
+    assert.strictEqual(compares.length, 0, 'no item yet: nothing compared');
+    /* paste the item anywhere: compared once */
+    await pasteOnPage(next, UQ_HOODIE_LINK);
+    await resultDone(next);
+    await next.waitForTimeout(600);
+    assert.strictEqual(compares.length, 1);
+    assert.strictEqual(await next.getAttribute('#fit-compare', 'data-verdict'), 'recommended');
+    assert.match(await next.textContent('#fit-compare'), /Sweatshirt, size L/);
+    /* the same link pasted again: nothing new */
+    await pasteOnPage(next, UQ_HOODIE_LINK);
+    await next.waitForTimeout(800);
+    assert.strictEqual(compares.length, 1, 'no second comparison');
+    /* Remove: forgotten on this device too */
+    await next.click('.ff-ref-remove');
+    await next.waitForSelector('#ff-reference[data-visit="empty"] .ffr-form');
+    assert.strictEqual(await next.evaluate((k) => localStorage.getItem(k), SAVED_KEY), null);
+    await next.waitForFunction(() => document.getElementById('fit-result').hidden, null, { timeout: 4000 });
+    await context.close();
+  }));
+
+  await test('remembered garments that don’t hold: unreadable or old-version data is dropped, a size Fynd no longer lists is forgotten and said, and a check that fails leaves it unused — nothing is compared on any of them', () => asChecked(UQ_PAIR, async () => {
+    const context = await openContext({ byHand: false });
+    const compares = [];
+    context.on('request', (r) => { if (/[?&]compare=1/.test(r.url())) compares.push(r.url()); });
+    const visitWith = async (value, setup) => {
+      const page = await context.newPage();
+      await page.addInitScript(([k, v]) => { if (!sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1'); localStorage.setItem(k, v); } }, [SAVED_KEY, value]);
+      if (setup) await setup(page);
+      await open(page, 'index.html');
+      await page.waitForSelector('#ff-reference .ffr-form');
+      return page;
+    };
+    const UQ = { v: 1, url: 'https://www.uniqlo.com/us/en/products/E475377-000/00', brandId: 'uniqlo', code: 'E475377-000', name: 'Sweatshirt', brand: 'UNIQLO', type: 'sweatshirts', line: 'men', size: 'L' };
+    /* not JSON, another version, a size the profile can't keep: dropped quietly */
+    for (const bad of ['{not json', JSON.stringify(Object.assign({}, UQ, { v: 0 })), JSON.stringify(Object.assign({}, UQ, { size: 'XXXXL' })), JSON.stringify(Object.assign({}, UQ, { url: 'javascript:alert(1)' }))]) {
+      const page = await visitWith(bad);
+      await page.waitForTimeout(500);
+      assert.strictEqual(await page.evaluate((k) => localStorage.getItem(k), SAVED_KEY), null, `dropped: ${bad}`);
+      assert.strictEqual(await page.getAttribute('#ff-reference', 'data-visit'), 'empty');
+      await page.close();
+    }
+    /* a product whose sizes Fynd doesn't list: forgotten, said so, not kept */
+    const zara = await visitWith(JSON.stringify({ v: 1, url: 'https://www.zara.com/us/en/compact-boxy-fit-hoodie-p08054370.html', brandId: null, code: null, name: 'COMPACT BOXY FIT HOODIE', brand: 'Zara', type: 'hoodies', line: 'men', size: 'XXL' }));
+    await zara.waitForSelector('#ff-reference[data-restore="forgotten"]');
+    assert.match(await zara.textContent('#ffr-held'), /Size XXL isn’t listed for this garment any more/);
+    assert.strictEqual(await zara.getAttribute('#ff-reference', 'data-visit'), 'empty');
+    assert.strictEqual(await zara.evaluate((k) => localStorage.getItem(k), SAVED_KEY), null);
+    await zara.close();
+    /* the check can't be made: not used, still remembered, the shopper told */
+    const down = await visitWith(JSON.stringify(UQ), (page) => page.route('**/api/size-recommendation?check=1', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })));
+    await down.waitForSelector('#ff-reference[data-restore="unchecked"]');
+    assert.match(await down.textContent('#ffr-held'), /couldn’t be checked just now, so it isn’t used yet/);
+    assert.strictEqual(await down.getAttribute('#ff-reference', 'data-visit'), 'empty');
+    assert.notStrictEqual(await down.evaluate((k) => localStorage.getItem(k), SAVED_KEY), null);
+    await down.close();
+    assert.deepStrictEqual(compares, [], 'nothing compared on a garment that didn’t hold');
+    await context.close();
+  }));
+
+  await test('an answer for an old choice never shows: the size changed while its comparison is under way — that answer is dropped, the new one compared and shown', () => asChecked(UQ_PAIR, async () => {
+    const context = await openContext({ byHand: false });
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const compares = [];
+    let held = true;
+    let release;
+    const gate = new Promise((r) => { release = r; });
+    await page.route(/[?&]compare=1/, async (route) => {
+      compares.push(route.request().postDataJSON());
+      if (held) { held = false; await gate; }
+      return route.continue();
+    });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-anchors:not([hidden]) .ff-anchor');
+    await pasteOnPage(page, UQ_HOODIE_LINK);
+    await page.waitForSelector('#ffi-found[data-state="automatic"]');
+    await page.click('#ff-anchors .ff-anchor[data-id="uniqlo-e475377-sweatshirt-us"]');
+    await page.click('#ffr-pick .ffr-size-pill[data-size="L"]');
+    await page.waitForFunction(() => document.getElementById('fit-result').dataset.state === 'loading');
+    /* while L's answer is held back: the size changed to M */
+    await page.click('.ff-ref-edit');
+    await page.click('#ffr-pick .ffr-size-pill[data-size="M"]');
+    await page.waitForTimeout(300);
+    release();
+    await page.waitForFunction(() => document.getElementById('fit-result').dataset.state === 'done' && /size M/.test(document.getElementById('fit-compare').textContent), null, { timeout: 15000 });
+    await page.waitForTimeout(600);
+    assert.deepStrictEqual(compares.map((b) => b.reference.garment.anchor.size), ['L', 'M'], 'one for each choice, none twice');
+    assert.doesNotMatch(await page.textContent('#fit-compare'), /Sweatshirt, size L/);
     await context.close();
   }));
 
