@@ -1824,7 +1824,53 @@ const linkFromInbox = (pattern) => {
     await context.close();
   }));
 
-  await test('the garment remembered on this device: picked by keyboard, saved without measurements, restored next visit only after Fynd checks it again — then a pasted link is compared once; Remove forgets it', () => asChecked(UQ_PAIR, async () => {
+  /* ---------- the closet: up to three garments on this device ---------- */
+  const CLOSET_KEY = 'fynd_closet_v2';
+  const CLOSET_IDS = UQ_PAIR.concat(['zara-00761350-basic-relaxed-fit-hoodie-us', 'zara-00761810-basic-heavyweight-hoodie-us', 'uniqlo-e471808-sweat-oversized-pullover-hoodie-us', 'zara-08054370-compact-boxy-fit-hoodie-us']);
+  const UQ_CREW = 'https://www.uniqlo.com/us/en/products/E475377-000/00';
+  const ZR_RELAXED = 'https://www.zara.com/us/en/basic-relaxed-fit-hoodie-p00761350.html';
+  const ZR_HEAVY = 'https://www.zara.com/us/en/basic-heavyweight-hoodie-p00761810.html';
+  const UQ_OVERSIZED = 'https://www.uniqlo.com/us/en/products/E471808-000/00';
+  const ZARA_BOXY = 'https://www.zara.com/us/en/compact-boxy-fit-hoodie-p08054370.html';
+  const ITEM_KEYS = ['brand', 'brandId', 'code', 'id', 'line', 'name', 'problem', 'savedAt', 'size', 'status', 'type', 'url', 'validatedAt'];
+  const closetOf = (page) => page.evaluate((k) => JSON.parse(localStorage.getItem(k)), CLOSET_KEY);
+  const watchSizing = (page) => {
+    const seen = { checks: [], compares: [] };
+    page.on('request', (r) => {
+      if (/size-recommendation\?check=1/.test(r.url())) seen.checks.push(r.url());
+      if (/[?&]compare=1/.test(r.url())) seen.compares.push(r.postDataJSON());
+    });
+    return seen;
+  };
+  const comparedWith = (b) => [b.reference.garment.anchor.product && b.reference.garment.anchor.product.url, b.reference.garment.anchor.size];
+  const until = async (fn, what, ms) => {
+    const end = Date.now() + (ms || 15000);
+    while (!(await fn())) {
+      if (Date.now() > end) throw new Error(`timed out: ${what}`);
+      await new Promise((r) => setTimeout(r, 100));
+    }
+  };
+  const pickAnchor = async (page, id, size) => {
+    await page.click(`#ff-anchors .ff-anchor[data-id="${id}"]`);
+    await page.click(`#ffr-pick .ffr-size-pill[data-size="${size}"]`);
+  };
+  const stored = (id, url, brand, name, type, size, extra) => Object.assign({ id, url, brandId: null, code: null, name, brand, type, line: 'men', size, savedAt: '2026-11-01T10:00:00.000Z', validatedAt: null, status: 'ok', problem: null }, extra || {});
+  /* a page whose device holds these values before Fynd loads (written once per tab) */
+  const seededPage = async (context, values, setup) => {
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.addInitScript((v) => {
+      if (sessionStorage.getItem('seeded')) return;
+      sessionStorage.setItem('seeded', '1');
+      Object.entries(v).forEach(([k, x]) => localStorage.setItem(k, x));
+    }, values);
+    const seen = watchSizing(page);
+    if (setup) await setup(page);
+    await open(page, 'index.html');
+    return { page, seen };
+  };
+
+  await test('the garment remembered on this device: picked by keyboard, put in the closet without measurements, restored next visit only after Fynd checks it again — then a pasted link is compared once; Remove empties the closet', () => asChecked(UQ_PAIR, async () => {
     const context = await openContext({ byHand: false });
     const page = await context.newPage();
     await page.setViewportSize({ width: 1440, height: 900 });
@@ -1847,84 +1893,457 @@ const linkFromInbox = (pattern) => {
     await page.keyboard.press('ArrowRight');
     await page.keyboard.press('Enter');
     await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit[data-remembered="true"]');
-    /* remembered: what identifies it and the size — never a measurement */
-    const saved = await page.evaluate((k) => JSON.parse(localStorage.getItem(k)), SAVED_KEY);
-    assert.deepStrictEqual(Object.keys(saved).sort(), ['brand', 'brandId', 'code', 'line', 'name', 'savedAt', 'size', 'type', 'url', 'v']);
-    assert.deepStrictEqual([saved.v, saved.url, saved.size, saved.type], [1, 'https://www.uniqlo.com/us/en/products/E475377-000/00', 'L', 'sweatshirts']);
+    /* in the closet: what identifies it and the size — never a measurement — and the default */
+    const closet = await closetOf(page);
+    assert.strictEqual(closet.v, 2);
+    assert.strictEqual(closet.items.length, 1);
+    assert.deepStrictEqual(Object.keys(closet.items[0]).sort(), ITEM_KEYS);
+    assert.deepStrictEqual([closet.items[0].url, closet.items[0].size, closet.items[0].type, closet.items[0].status], [UQ_CREW, 'L', 'sweatshirts', 'ok']);
+    assert.strictEqual(closet.activeId, closet.items[0].id);
+    assert.strictEqual(await page.evaluate((k) => localStorage.getItem(k), SAVED_KEY), null, 'nothing written under the v1 key');
     assert.match(await page.textContent('.ff-ref--visit .ff-ref-name'), /✓\s*UNIQLO · Sweatshirt — Size L/);
     assert.match(await page.textContent('.ff-ref--visit'), /Remembered on this device\. Not saved to an account\./);
     assert.deepStrictEqual(await page.$$eval('.ff-ref--visit .ff-ref-actions button', (bs) => bs.map((b) => b.textContent)), ['Change', 'Remove']);
     /* the next visit (a new tab: this tab's own memory empty) */
     const next = await context.newPage();
     await next.setViewportSize({ width: 1440, height: 900 });
-    const checks = [];
-    const compares = [];
-    next.on('request', (r) => {
-      if (/size-recommendation\?check=1/.test(r.url())) checks.push(r.url());
-      if (/[?&]compare=1/.test(r.url())) compares.push(r.url());
-    });
+    const seen = watchSizing(next);
     await open(next, 'index.html');
     await next.waitForSelector('#ff-reference[data-restore="restored"] .ff-ref--visit[data-remembered="true"]');
-    assert.strictEqual(checks.length, 1, 'checked again with the server before it is used');
+    assert.strictEqual(seen.checks.length, 1, 'checked again with the server before it is used');
     assert.match(await next.textContent('.ff-ref--visit .ff-ref-name'), /UNIQLO · Sweatshirt — Size L/);
     assert.match(await next.textContent('.ff-ref--visit .ff-ref-held'), /Fynd holds checked garment measurements for this product/);
-    assert.strictEqual(compares.length, 0, 'no item yet: nothing compared');
+    assert.ok((await closetOf(next)).items[0].validatedAt, 'its check recorded');
+    assert.strictEqual(seen.compares.length, 0, 'no item yet: nothing compared');
     /* paste the item anywhere: compared once */
     await pasteOnPage(next, UQ_HOODIE_LINK);
     await resultDone(next);
     await next.waitForTimeout(600);
-    assert.strictEqual(compares.length, 1);
+    assert.strictEqual(seen.compares.length, 1);
     assert.strictEqual(await next.getAttribute('#fit-compare', 'data-verdict'), 'recommended');
     assert.match(await next.textContent('#fit-compare'), /Sweatshirt, size L/);
     /* the same link pasted again: nothing new */
     await pasteOnPage(next, UQ_HOODIE_LINK);
     await next.waitForTimeout(800);
-    assert.strictEqual(compares.length, 1, 'no second comparison');
-    /* Remove: forgotten on this device too */
+    assert.strictEqual(seen.compares.length, 1, 'no second comparison');
+    /* Remove: out of the closet on this device too */
     await next.click('.ff-ref-remove');
     await next.waitForSelector('#ff-reference[data-visit="empty"] .ffr-form');
-    assert.strictEqual(await next.evaluate((k) => localStorage.getItem(k), SAVED_KEY), null);
+    assert.deepStrictEqual(await closetOf(next), { v: 2, activeId: null, items: [], migratedFrom: null });
+    assert.strictEqual(await next.$('#ff-closet'), null);
     await next.waitForFunction(() => document.getElementById('fit-result').hidden, null, { timeout: 4000 });
     await context.close();
   }));
 
-  await test('remembered garments that don’t hold: unreadable or old-version data is dropped, a size Fynd no longer lists is forgotten and said, and a check that fails leaves it unused — nothing is compared on any of them', () => asChecked(UQ_PAIR, async () => {
+  await test('the closet: the first garment saved as the default, a second and third added, one click switches and compares once, a new default set, an inactive one removed, the default removed hands on to the next, and an empty closet is a plain search again', () => asChecked(CLOSET_IDS, async () => {
     const context = await openContext({ byHand: false });
-    const compares = [];
-    context.on('request', (r) => { if (/[?&]compare=1/.test(r.url())) compares.push(r.url()); });
-    const visitWith = async (value, setup) => {
-      const page = await context.newPage();
-      await page.addInitScript(([k, v]) => { if (!sessionStorage.getItem('seeded')) { sessionStorage.setItem('seeded', '1'); localStorage.setItem(k, v); } }, [SAVED_KEY, value]);
-      if (setup) await setup(page);
-      await open(page, 'index.html');
-      await page.waitForSelector('#ff-reference .ffr-form');
-      return page;
-    };
-    const UQ = { v: 1, url: 'https://www.uniqlo.com/us/en/products/E475377-000/00', brandId: 'uniqlo', code: 'E475377-000', name: 'Sweatshirt', brand: 'UNIQLO', type: 'sweatshirts', line: 'men', size: 'L' };
-    /* not JSON, another version, a size the profile can't keep: dropped quietly */
-    for (const bad of ['{not json', JSON.stringify(Object.assign({}, UQ, { v: 0 })), JSON.stringify(Object.assign({}, UQ, { size: 'XXXXL' })), JSON.stringify(Object.assign({}, UQ, { url: 'javascript:alert(1)' }))]) {
-      const page = await visitWith(bad);
-      await page.waitForTimeout(500);
-      assert.strictEqual(await page.evaluate((k) => localStorage.getItem(k), SAVED_KEY), null, `dropped: ${bad}`);
-      assert.strictEqual(await page.getAttribute('#ff-reference', 'data-visit'), 'empty');
-      await page.close();
-    }
-    /* a product whose sizes Fynd doesn't list: forgotten, said so, not kept */
-    const zara = await visitWith(JSON.stringify({ v: 1, url: 'https://www.zara.com/us/en/compact-boxy-fit-hoodie-p08054370.html', brandId: null, code: null, name: 'COMPACT BOXY FIT HOODIE', brand: 'Zara', type: 'hoodies', line: 'men', size: 'XXL' }));
-    await zara.waitForSelector('#ff-reference[data-restore="forgotten"]');
-    assert.match(await zara.textContent('#ffr-held'), /Size XXL isn’t listed for this garment any more/);
-    assert.strictEqual(await zara.getAttribute('#ff-reference', 'data-visit'), 'empty');
-    assert.strictEqual(await zara.evaluate((k) => localStorage.getItem(k), SAVED_KEY), null);
-    await zara.close();
-    /* the check can't be made: not used, still remembered, the shopper told */
-    const down = await visitWith(JSON.stringify(UQ), (page) => page.route('**/api/size-recommendation?check=1', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })));
-    await down.waitForSelector('#ff-reference[data-restore="unchecked"]');
-    assert.match(await down.textContent('#ffr-held'), /couldn’t be checked just now, so it isn’t used yet/);
-    assert.strictEqual(await down.getAttribute('#ff-reference', 'data-visit'), 'empty');
-    assert.notStrictEqual(await down.evaluate((k) => localStorage.getItem(k), SAVED_KEY), null);
-    await down.close();
-    assert.deepStrictEqual(compares, [], 'nothing compared on a garment that didn’t hold');
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    const seen = watchSizing(page);
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-anchors:not([hidden]) .ff-anchor');
+    assert.strictEqual(await page.$('#ff-closet'), null, 'an empty closet: nothing drawn');
+    assert.strictEqual(await page.evaluate((k) => localStorage.getItem(k), CLOSET_KEY), null);
+    await pasteOnPage(page, UQ_HOODIE_LINK);
+    await page.waitForSelector('#ffi-found[data-state="automatic"]');
+    /* the first: saved, the default, in use */
+    await pickAnchor(page, 'uniqlo-e475377-sweatshirt-us', 'L');
+    await until(() => seen.compares.length === 1, 'first comparison');
+    let closet = await closetOf(page);
+    assert.strictEqual(closet.items.length, 1);
+    const uq = closet.items[0].id;
+    assert.match(uq, /^g_[a-z0-9]+$/);
+    assert.strictEqual(closet.activeId, uq);
+    assert.strictEqual(await page.getAttribute(`.ff-closet-item[data-id="${uq}"]`, 'data-default'), 'true');
+    assert.strictEqual(await page.getAttribute(`.ff-closet-item[data-id="${uq}"] .ff-closet-use`, 'aria-pressed'), 'true');
+    assert.strictEqual(await page.textContent(`.ff-closet-item[data-id="${uq}"] .ff-closet-badge`), 'Default');
+    /* a second and a third: added, used, the default unchanged */
+    await page.click('.ff-closet-add');
+    await pickAnchor(page, 'zara-00761350-basic-relaxed-fit-hoodie-us', 'M');
+    await until(() => seen.compares.length === 2, 'second comparison');
+    await page.click('.ff-closet-add');
+    await pickAnchor(page, 'zara-00761810-basic-heavyweight-hoodie-us', 'L');
+    await until(() => seen.compares.length === 3, 'third comparison');
+    closet = await closetOf(page);
+    assert.deepStrictEqual(closet.items.map((i) => [i.url, i.size]), [[UQ_CREW, 'L'], [ZR_RELAXED, 'M'], [ZR_HEAVY, 'L']]);
+    assert.strictEqual(closet.activeId, uq, 'the first stays the default');
+    const [, relaxed, heavy] = closet.items.map((i) => i.id);
+    assert.strictEqual(await page.textContent('.ff-closet-add'), 'Use a different garment', 'full: no Add another');
+    assert.match(await page.textContent('#ff-closet'), /3 of 3/);
+    assert.deepStrictEqual(seen.compares.map(comparedWith), [[UQ_CREW, 'L'], [ZR_RELAXED, 'M'], [ZR_HEAVY, 'L']]);
+    /* one click: checked again once, then compared once against the item */
+    const checks = seen.checks.length;
+    await page.click(`.ff-closet-item[data-id="${uq}"] .ff-closet-use`);
+    await until(() => seen.compares.length === 4, 'compared after switching');
+    assert.strictEqual(seen.checks.length, checks + 1);
+    assert.deepStrictEqual(comparedWith(seen.compares[3]), [UQ_CREW, 'L']);
+    await resultDone(page);
+    assert.match(await page.textContent('#fit-compare'), /Sweatshirt, size L/);
+    /* the one in use clicked again: nothing asked, nothing compared */
+    await page.click(`.ff-closet-item[data-id="${uq}"] .ff-closet-use`);
+    await page.waitForTimeout(800);
+    assert.deepStrictEqual([seen.checks.length, seen.compares.length], [checks + 1, 4]);
+    /* Set as default */
+    await page.click(`.ff-closet-item[data-id="${relaxed}"] .ff-closet-use`);
+    await until(() => seen.compares.length === 5, 'compared after the second switch');
+    await page.waitForSelector('.ff-ref-default');
+    await page.click('.ff-ref-default');
+    await page.waitForSelector(`.ff-closet-item[data-id="${relaxed}"][data-default="true"]`);
+    assert.strictEqual((await closetOf(page)).activeId, relaxed);
+    assert.strictEqual(await page.$('.ff-ref-default'), null, 'the default needs no Set as default');
+    /* an inactive one removed: the one in use stays, nothing compared */
+    await page.click(`.ff-closet-item[data-id="${heavy}"] .ff-closet-remove`);
+    await page.waitForTimeout(600);
+    closet = await closetOf(page);
+    assert.deepStrictEqual(closet.items.map((i) => i.id), [uq, relaxed]);
+    assert.strictEqual(await page.getAttribute(`.ff-closet-item[data-id="${relaxed}"] .ff-closet-use`, 'aria-pressed'), 'true');
+    assert.strictEqual(seen.compares.length, 5);
+    assert.strictEqual(await page.textContent('.ff-closet-add'), '+ Add another', 'room again');
+    /* the default, in use, removed: the first remaining becomes the default and is used */
+    await page.click('.ff-ref--visit .ff-ref-remove');
+    await until(() => seen.compares.length === 6, 'compared with the next garment');
+    assert.deepStrictEqual(comparedWith(seen.compares[5]), [UQ_CREW, 'L']);
+    closet = await closetOf(page);
+    assert.deepStrictEqual([closet.items.map((i) => i.id), closet.activeId], [[uq], uq]);
+    /* the last removed: an empty closet, the search again */
+    await page.click('.ff-ref--visit .ff-ref-remove');
+    await page.waitForSelector('#ff-reference[data-visit="empty"] .ffr-form');
+    assert.deepStrictEqual(await closetOf(page), { v: 2, activeId: null, items: [], migratedFrom: null });
+    assert.strictEqual(await page.$('#ff-closet'), null);
+    await page.waitForTimeout(600);
+    assert.strictEqual(seen.compares.length, 6, 'nothing compared without a garment');
     await context.close();
+  }));
+
+  await test('one garment is one product in one size: the same product in another size is saved beside it, never over it; the very same garment again adds nothing; a garment sold as Not sure stays in the closet', () => asChecked(CLOSET_IDS, async () => {
+    const context = await openContext({ byHand: false });
+    const page = await context.newPage();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-anchors:not([hidden]) .ff-anchor');
+    /* sold as "Not sure" (the form's own choice), then its size picked */
+    await page.click('#ff-anchors .ff-anchor[data-id="uniqlo-e475377-sweatshirt-us"]');
+    await page.evaluate(() => { document.getElementById('ffr-line').value = 'not-sure'; });
+    await page.click('#ffr-pick .ffr-size-pill[data-size="L"]');
+    await page.waitForSelector('.ff-ref--visit[data-remembered="true"]');
+    let first = (await closetOf(page)).items[0];
+    assert.deepStrictEqual([first.url, first.size, first.line], [UQ_CREW, 'L', 'not-sure']);
+    /* read back on another visit: kept, not dropped */
+    const check = await context.newPage();
+    await open(check, 'index.html');
+    await check.waitForSelector('#ff-reference[data-restore="restored"]');
+    assert.deepStrictEqual((await closetOf(check)).items.map((i) => [i.id, i.line]), [[first.id, 'not-sure']]);
+    await check.close();
+    first = (await closetOf(page)).items[0];
+    /* the same product in M: a second garment, L untouched */
+    await page.click('.ff-closet-add');
+    await pickAnchor(page, 'uniqlo-e475377-sweatshirt-us', 'M');
+    await page.waitForSelector('.ff-closet-item:nth-child(2) .ff-closet-use[aria-pressed="true"]');
+    let closet = await closetOf(page);
+    assert.deepStrictEqual(closet.items.map((i) => [i.url, i.size]), [[UQ_CREW, 'L'], [UQ_CREW, 'M']]);
+    assert.deepStrictEqual(closet.items[0], first, 'L kept exactly as it was');
+    assert.notStrictEqual(closet.items[1].id, first.id);
+    assert.strictEqual(closet.activeId, first.id);
+    /* the very same garment (L) picked again: no third entry — that entry refreshed with what the form says now */
+    await page.click('.ff-closet-add');
+    await pickAnchor(page, 'uniqlo-e475377-sweatshirt-us', 'L');
+    await page.waitForSelector(`.ff-closet-item[data-id="${first.id}"] .ff-closet-use[aria-pressed="true"]`);
+    closet = await closetOf(page);
+    assert.deepStrictEqual(closet.items.map((i) => [i.id, i.size]), [[first.id, 'L'], [closet.items[1].id, 'M']]);
+    /* the next visit: both read back, neither dropped */
+    const next = await context.newPage();
+    await next.setViewportSize({ width: 1440, height: 900 });
+    await open(next, 'index.html');
+    await next.waitForSelector('#ff-reference[data-restore="restored"]');
+    assert.deepStrictEqual((await closetOf(next)).items.map((i) => [i.size, i.line]), [['L', 'men'], ['M', 'men']]);
+    assert.strictEqual(await next.$$eval('.ff-closet-item', (ls) => ls.length), 2);
+    await context.close();
+  }));
+
+  await test('a full closet: another garment picked is never saved over one — the shopper chooses which to replace, or compares it once without saving; Cancel leaves everything as it was', () => asChecked(CLOSET_IDS, async () => {
+    const context = await openContext({ byHand: false });
+    const three = { v: 2, activeId: 'g_aaaa1111', migratedFrom: null, items: [
+      stored('g_aaaa1111', UQ_CREW, 'UNIQLO', 'Sweatshirt', 'sweatshirts', 'L'),
+      stored('g_bbbb2222', ZR_RELAXED, 'Zara', 'BASIC RELAXED FIT HOODIE', 'hoodies', 'M'),
+      stored('g_cccc3333', ZR_HEAVY, 'Zara', 'BASIC HEAVYWEIGHT HOODIE', 'hoodies', 'L')] };
+    const { page, seen } = await seededPage(context, { [CLOSET_KEY]: JSON.stringify(three) });
+    await page.waitForSelector('#ff-reference[data-restore="restored"]');
+    assert.strictEqual(await page.getAttribute('.ff-closet-item[data-id="g_aaaa1111"] .ff-closet-use', 'aria-pressed'), 'true', 'the default restored');
+    await pasteOnPage(page, UQ_HOODIE_LINK);
+    await until(() => seen.compares.length === 1, 'first comparison');
+    const ids = async () => (await closetOf(page)).items.map((i) => [i.id, i.url, i.size]);
+    const before = await ids();
+    const pickFourth = async () => {
+      await page.click('.ff-closet-add');
+      await pickAnchor(page, 'uniqlo-e471808-sweat-oversized-pullover-hoodie-us', 'M');
+      await page.waitForSelector('#ff-closet-full');
+    };
+    /* asked, nothing overwritten, nothing compared yet */
+    await pickFourth();
+    assert.match(await page.textContent('#ff-closet-full'), /already holds 3 garments/);
+    assert.deepStrictEqual(await page.$$eval('#ff-closet-full .ff-closet-replace', (bs) => bs.map((b) => b.dataset.id)), ['g_aaaa1111', 'g_bbbb2222', 'g_cccc3333']);
+    await page.waitForTimeout(600);
+    assert.deepStrictEqual(await ids(), before);
+    assert.strictEqual(seen.compares.length, 1);
+    /* Cancel: as it was */
+    await page.click('.ff-closet-cancel');
+    await page.waitForSelector('.ff-ref--visit[data-remembered="true"]');
+    assert.deepStrictEqual(await ids(), before);
+    assert.strictEqual(seen.compares.length, 1);
+    /* compared once, not saved */
+    await pickFourth();
+    await page.click('.ff-closet-once');
+    await until(() => seen.compares.length === 2, 'the one-time comparison');
+    assert.deepStrictEqual(comparedWith(seen.compares[1]), [UQ_OVERSIZED, 'M']);
+    assert.deepStrictEqual(await ids(), before, 'the closet untouched');
+    assert.match(await page.textContent('.ff-ref--visit .ff-ref-status'), /Compared once: not saved to your closet\./);
+    assert.strictEqual(await page.$('.ff-closet-use[aria-pressed="true"]'), null, 'no closet garment in use');
+    /* replaced, only once chosen: that one alone, in its place */
+    await pickFourth();
+    await page.click('#ff-closet-full .ff-closet-replace[data-id="g_bbbb2222"]');
+    await page.waitForSelector('.ff-ref--visit[data-remembered="true"]');
+    const after = await closetOf(page);
+    assert.deepStrictEqual(after.items.map((i) => i.url), [UQ_CREW, UQ_OVERSIZED, ZR_HEAVY]);
+    assert.deepStrictEqual([after.items[0].id, after.items[2].id, after.activeId], ['g_aaaa1111', 'g_cccc3333', 'g_aaaa1111']);
+    assert.notStrictEqual(after.items[1].id, 'g_bbbb2222');
+    assert.strictEqual(await page.getAttribute(`.ff-closet-item[data-id="${after.items[1].id}"] .ff-closet-use`, 'aria-pressed'), 'true');
+    /* a product already held, in another size: asked as well — never written over the size kept */
+    const held = await closetOf(page);
+    await page.click('.ff-closet-add');
+    await pickAnchor(page, 'uniqlo-e475377-sweatshirt-us', 'M');
+    await page.waitForSelector('#ff-closet-full');
+    assert.deepStrictEqual(await closetOf(page), held, 'UNIQLO Sweatshirt L kept as it was');
+    await page.click('.ff-closet-cancel');
+    assert.deepStrictEqual(await closetOf(page), held);
+    await context.close();
+  }));
+
+  await test('the v1 garment moved into the closet: once, as the default, the old entry removed only after the closet reads back — run again, no duplicate; unreadable v1 data is dropped', () => asChecked(UQ_PAIR, async () => {
+    const UQ = { v: 1, url: UQ_CREW, brandId: 'uniqlo', code: 'E475377-000', name: 'Sweatshirt', brand: 'UNIQLO', type: 'sweatshirts', line: 'men', size: 'L', savedAt: '2026-11-02T09:00:00.000Z' };
+    const context = await openContext({ byHand: false });
+    const first = await seededPage(context, { [SAVED_KEY]: JSON.stringify(UQ) });
+    await first.page.waitForSelector('#ff-reference[data-restore="restored"] .ff-ref--visit[data-remembered="true"]');
+    const moved = await closetOf(first.page);
+    assert.strictEqual(moved.migratedFrom, 'v1');
+    assert.strictEqual(moved.items.length, 1);
+    assert.match(moved.items[0].id, /^g_v1[a-z0-9]+$/);
+    assert.strictEqual(moved.activeId, moved.items[0].id);
+    assert.deepStrictEqual([moved.items[0].url, moved.items[0].size, moved.items[0].type, moved.items[0].brand, moved.items[0].savedAt], [UQ_CREW, 'L', 'sweatshirts', 'UNIQLO', '2026-11-02T09:00:00.000Z']);
+    assert.strictEqual(await first.page.evaluate((k) => localStorage.getItem(k), SAVED_KEY), null, 'v1 removed once the closet held it');
+    assert.strictEqual(first.seen.checks.length, 1, 'checked again before it is used');
+    /* the v1 entry back again (another tab, an old copy): the closet is kept, nothing added */
+    const again = await seededPage(context, { [SAVED_KEY]: JSON.stringify(UQ) });
+    await again.page.waitForSelector('#ff-reference[data-restore="restored"]');
+    const still = await closetOf(again.page);
+    assert.deepStrictEqual(still.items.map((i) => i.id), [moved.items[0].id]);
+    /* migrated anew from scratch (the closet unreadable): the same id, still one */
+    const other = await openContext({ byHand: false });
+    const fresh = await seededPage(other, { [SAVED_KEY]: JSON.stringify(UQ), [CLOSET_KEY]: '{not json' });
+    await fresh.page.waitForSelector('#ff-reference[data-restore="restored"]');
+    const rebuilt = await closetOf(fresh.page);
+    assert.deepStrictEqual(rebuilt.items.map((i) => i.id), [moved.items[0].id], 'the same id every time');
+    await other.close();
+    /* a v1 garment sold as "Not sure": moved in too, and still there on the next visit */
+    const unsure = await openContext({ byHand: false });
+    const ns = await seededPage(unsure, { [SAVED_KEY]: JSON.stringify(Object.assign({}, UQ, { line: 'not-sure' })) });
+    await ns.page.waitForSelector('#ff-reference[data-restore="restored"]');
+    assert.deepStrictEqual((await closetOf(ns.page)).items.map((i) => [i.size, i.line]), [['L', 'not-sure']]);
+    assert.strictEqual(await ns.page.evaluate((k) => localStorage.getItem(k), SAVED_KEY), null);
+    const nsNext = await unsure.newPage();
+    await open(nsNext, 'index.html');
+    await nsNext.waitForSelector('#ff-reference[data-restore="restored"]');
+    assert.deepStrictEqual((await closetOf(nsNext)).items.map((i) => [i.size, i.line]), [['L', 'not-sure']], 'not dropped when read again');
+    await unsure.close();
+    /* v1 data that doesn't read: dropped, no closet made */
+    for (const bad of ['{not json', JSON.stringify(Object.assign({}, UQ, { v: 0 })), JSON.stringify(Object.assign({}, UQ, { size: 'XXXXL' })), JSON.stringify(Object.assign({}, UQ, { url: 'javascript:alert(1)' }))]) {
+      const ctx = await openContext({ byHand: false });
+      const { page } = await seededPage(ctx, { [SAVED_KEY]: bad });
+      await page.waitForSelector('#ff-reference .ffr-form');
+      await page.waitForTimeout(400);
+      assert.strictEqual(await page.evaluate((k) => localStorage.getItem(k), SAVED_KEY), null, `dropped: ${bad}`);
+      assert.strictEqual(await page.evaluate((k) => localStorage.getItem(k), CLOSET_KEY), null);
+      assert.strictEqual(await page.getAttribute('#ff-reference', 'data-visit'), 'empty');
+      await ctx.close();
+    }
+    await context.close();
+  }));
+
+  await test('a closet garment that no longer holds: marked as needing an update, kept, never compared; a check that can’t be made leaves it unused; Update re-picks it in place; a switch overtaken by another never lands', () => asChecked(CLOSET_IDS, async () => {
+    const context = await openContext({ byHand: false });
+    const zara = stored('g_zzzz0001', ZARA_BOXY, 'Zara', 'COMPACT BOXY FIT HOODIE', 'hoodies', 'XXL');
+    const uq = stored('g_uuuu0002', UQ_CREW, 'UNIQLO', 'Sweatshirt', 'sweatshirts', 'L');
+    const relaxed = stored('g_nnnn0003', ZR_RELAXED, 'Zara', 'BASIC RELAXED FIT HOODIE', 'hoodies', 'M');
+    let holdNext = false;
+    let release = null;
+    const { page, seen } = await seededPage(context, { [CLOSET_KEY]: JSON.stringify({ v: 2, activeId: zara.id, migratedFrom: null, items: [zara, uq, relaxed] }) }, (p) => p.route('**/api/size-recommendation?check=1', async (route) => {
+      if (holdNext) { holdNext = false; await new Promise((r) => { release = r; }); }
+      return route.continue();
+    }));
+    /* the default's size isn't listed any more: marked, kept, not used */
+    await page.waitForSelector('#ff-reference[data-restore="needs-update"]');
+    let closet = await closetOf(page);
+    assert.deepStrictEqual(closet.items.map((i) => i.id), [zara.id, uq.id, relaxed.id], 'kept');
+    assert.strictEqual(closet.items[0].status, 'needs-update');
+    assert.match(closet.items[0].problem, /Size XXL isn’t listed for this garment any more/);
+    assert.strictEqual(await page.textContent(`.ff-closet-item[data-id="${zara.id}"] .ff-closet-flag`), 'Needs update');
+    assert.match(await page.textContent('#ff-closet-note'), /Size XXL isn’t listed/);
+    assert.strictEqual(await page.getAttribute('#ff-reference', 'data-visit'), 'empty');
+    await pasteOnPage(page, UQ_HOODIE_LINK);
+    await page.waitForSelector('#ffi-found[data-state="automatic"]');
+    await page.waitForTimeout(700);
+    assert.strictEqual(seen.compares.length, 0, 'nothing compared with it');
+    /* Update: found again, a listed size picked — the same item, in place */
+    await page.click(`.ff-closet-item[data-id="${zara.id}"] .ff-closet-update`);
+    await page.waitForSelector('#ffr-pick[data-status="ready"] .ffr-size-pill[data-size="L"]');
+    assert.strictEqual(await page.$('#ffr-pick .ffr-size-pill[data-size="XXL"]'), null, 'no size made up');
+    await page.click('#ffr-pick .ffr-size-pill[data-size="L"]');
+    await until(() => seen.compares.length === 1, 'compared once updated');
+    assert.deepStrictEqual(comparedWith(seen.compares[0]), [ZARA_BOXY, 'L']);
+    closet = await closetOf(page);
+    assert.deepStrictEqual([closet.items[0].id, closet.items[0].size, closet.items[0].status, closet.items[0].problem, closet.items.length], [zara.id, 'L', 'ok', null, 3]);
+    /* switched to UNIQLO, then to the relaxed hoodie before UNIQLO's check answers: only that one lands */
+    holdNext = true;
+    await page.click(`.ff-closet-item[data-id="${uq.id}"] .ff-closet-use`);
+    await until(() => Boolean(release), 'the held check');
+    await page.click(`.ff-closet-item[data-id="${relaxed.id}"] .ff-closet-use`);
+    await until(() => seen.compares.length === 2, 'compared with the relaxed hoodie');
+    release();
+    release = null;
+    await page.waitForTimeout(900);
+    assert.deepStrictEqual(seen.compares.map(comparedWith), [[ZARA_BOXY, 'L'], [ZR_RELAXED, 'M']], 'the overtaken switch compared nothing');
+    assert.strictEqual(await page.getAttribute(`.ff-closet-item[data-id="${relaxed.id}"] .ff-closet-use`, 'aria-pressed'), 'true');
+    /* a switch called off by choosing the one in use again */
+    holdNext = true;
+    await page.click(`.ff-closet-item[data-id="${uq.id}"] .ff-closet-use`);
+    await until(() => Boolean(release), 'the second held check');
+    await page.click(`.ff-closet-item[data-id="${relaxed.id}"] .ff-closet-use`);
+    release();
+    await page.waitForTimeout(900);
+    assert.strictEqual(seen.compares.length, 2, 'called off: nothing compared');
+    assert.strictEqual(await page.getAttribute(`.ff-closet-item[data-id="${relaxed.id}"] .ff-closet-use`, 'aria-pressed'), 'true');
+    await page.close();
+    /* the server can't be asked: not used, not marked, kept — the shopper told */
+    const down = await seededPage(context, { [CLOSET_KEY]: JSON.stringify({ v: 2, activeId: uq.id, migratedFrom: null, items: [uq] }) }, (p) => p.route('**/api/size-recommendation?check=1', (route) => route.fulfill({ status: 500, contentType: 'application/json', body: '{}' })));
+    await down.page.waitForSelector('#ff-reference[data-restore="unchecked"]');
+    assert.match(await down.page.textContent('#ff-closet-note'), /couldn’t reach its server to check it just now, so it isn’t used yet/);
+    assert.strictEqual(await down.page.getAttribute('#ff-reference', 'data-visit'), 'empty');
+    const kept = await closetOf(down.page);
+    assert.deepStrictEqual([kept.items.length, kept.items[0].status], [1, 'ok']);
+    assert.strictEqual(down.seen.compares.length, 0);
+    await context.close();
+  }));
+
+  await test('a closet garment the server couldn’t be asked about is never marked as needing an update: a failed records list, a timed-out check or a product-page error leaves it saved and unused, said so — only the server’s own answer marks it', () => asChecked(UQ_PAIR, async () => {
+    const UQ_ITEM = stored('g_uuuu0002', UQ_CREW, 'UNIQLO', 'Sweatshirt', 'sweatshirts', 'L');
+    const OVERSIZED = stored('g_oooo0004', UQ_OVERSIZED, 'UNIQLO', 'Sweat Oversized Pullover Hoodie', 'hoodies', 'M', { brandId: 'uniqlo', code: 'E471808-000' });
+    const closetWith = (item) => ({ [CLOSET_KEY]: JSON.stringify({ v: 2, activeId: item.id, migratedFrom: null, items: [item] }) });
+    const unused = async (page, seen, item) => {
+      await page.waitForSelector('#ff-reference[data-restore="unchecked"]');
+      const c = await closetOf(page);
+      assert.deepStrictEqual([c.items.length, c.items[0].id, c.items[0].status, c.items[0].problem], [1, item.id, 'ok', null], 'kept as saved, not marked');
+      assert.strictEqual(await page.getAttribute(`.ff-closet-item[data-id="${item.id}"]`, 'data-status'), 'unreachable');
+      assert.strictEqual(await page.textContent(`.ff-closet-item[data-id="${item.id}"] .ff-closet-flag`), 'Couldn’t check');
+      assert.match(await page.textContent('#ff-closet-note'), /couldn’t reach its server to check it just now, so it isn’t used yet\. It’s still saved/);
+      assert.strictEqual(await page.getAttribute('#ff-reference', 'data-visit'), 'empty');
+      assert.strictEqual(seen.compares.length, 0);
+    };
+    /* the records' list fails (a server error), on opening and when asked again */
+    const ctxA = await openContext({ byHand: false });
+    let failAnchors = true;
+    const a = await seededPage(ctxA, closetWith(UQ_ITEM), (p) => p.route(/size-recommendation\?anchors=1/, (route) => (failAnchors ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }) : route.continue())));
+    await unused(a.page, a.seen, UQ_ITEM);
+    /* the server back: chosen again, it is checked, used, and compared once */
+    failAnchors = false;
+    await pasteOnPage(a.page, UQ_HOODIE_LINK);
+    await a.page.waitForSelector('#ffi-found[data-state="automatic"]');
+    await a.page.click(`.ff-closet-item[data-id="${UQ_ITEM.id}"] .ff-closet-use`);
+    await until(() => a.seen.compares.length === 1, 'compared once the check went through');
+    assert.deepStrictEqual(comparedWith(a.seen.compares[0]), [UQ_CREW, 'L']);
+    assert.strictEqual(await a.page.getAttribute(`.ff-closet-item[data-id="${UQ_ITEM.id}"]`, 'data-status'), null, 'the connection note gone');
+    assert.strictEqual(await a.page.$('#ff-closet-note'), null);
+    await ctxA.close();
+    /* the check times out */
+    const ctxB = await openContext({ byHand: false });
+    const b = await seededPage(ctxB, closetWith(UQ_ITEM), (p) => p.route('**/api/size-recommendation?check=1', (route) => route.abort('timedout')));
+    await unused(b.page, b.seen, UQ_ITEM);
+    await ctxB.close();
+    /* the brand's product page answers with a server error */
+    const ctxC = await openContext({ byHand: false });
+    const c = await seededPage(ctxC, closetWith(OVERSIZED), (p) => p.route(/size-recommendation\?brand=uniqlo&detail=/, (route) => route.fulfill({ status: 503, contentType: 'application/json', body: '{}' })));
+    await unused(c.page, c.seen, OVERSIZED);
+    await ctxC.close();
+    /* the server's own answer — no such product listed — does mark it */
+    const ctxD = await openContext({ byHand: false });
+    const d = await seededPage(ctxD, closetWith(OVERSIZED), (p) => p.route(/size-recommendation\?brand=uniqlo&detail=/, (route) => route.fulfill({ status: 404, contentType: 'application/json', body: JSON.stringify({ error: 'That product isn’t one Find Fit lists.', reason: 'unknown-product' }) })));
+    await d.page.waitForSelector('#ff-reference[data-restore="needs-update"]');
+    const marked = await closetOf(d.page);
+    assert.deepStrictEqual([marked.items.length, marked.items[0].status], [1, 'needs-update'], 'marked, and still saved');
+    assert.strictEqual(await d.page.textContent(`.ff-closet-item[data-id="${OVERSIZED.id}"] .ff-closet-flag`), 'Needs update');
+    assert.strictEqual(d.seen.compares.length, 0);
+    await ctxD.close();
+  }));
+
+  await test('a Change or Update left behind never writes over a garment: switching away ends it, a removed or since-changed target is never replaced, and a full-closet choice that went stale replaces nothing', () => asChecked(CLOSET_IDS, async () => {
+    /* Update on one, then a switch to another (whose check fails): the Update is over —
+       the next garment picked is added, the one being updated left exactly as saved */
+    const zara = stored('g_zzzz0001', ZARA_BOXY, 'Zara', 'COMPACT BOXY FIT HOODIE', 'hoodies', 'XXL');
+    const uq = stored('g_uuuu0002', UQ_CREW, 'UNIQLO', 'Sweatshirt', 'sweatshirts', 'L');
+    const ctx1 = await openContext({ byHand: false });
+    let failCheck = false;
+    const one = await seededPage(ctx1, { [CLOSET_KEY]: JSON.stringify({ v: 2, activeId: zara.id, migratedFrom: null, items: [zara, uq] }) }, (p) => p.route('**/api/size-recommendation?check=1', (route) => (failCheck ? route.fulfill({ status: 500, contentType: 'application/json', body: '{}' }) : route.continue())));
+    await one.page.waitForSelector('#ff-reference[data-restore="needs-update"]');
+    const flagged = (await closetOf(one.page)).items[0];
+    await one.page.click(`.ff-closet-item[data-id="${zara.id}"] .ff-closet-update`);
+    await one.page.waitForSelector('#ffr-pick[data-status="ready"] .ffr-size-pill[data-size="L"]');
+    failCheck = true;
+    await one.page.click(`.ff-closet-item[data-id="${uq.id}"] .ff-closet-use`);
+    await one.page.waitForSelector('#ff-reference[data-restore="unchecked"]');
+    assert.strictEqual(await one.page.$('#ffr-pick[data-status="ready"]'), null, 'the Update form closed by the switch');
+    failCheck = false;
+    await pickAnchor(one.page, 'uniqlo-e471808-sweat-oversized-pullover-hoodie-us', 'M');
+    await one.page.waitForSelector('.ff-ref--visit[data-remembered="true"]');
+    let closet = await closetOf(one.page);
+    assert.deepStrictEqual(closet.items.map((i) => [i.id, i.url, i.size]), [[zara.id, ZARA_BOXY, 'XXL'], [uq.id, UQ_CREW, 'L'], [closet.items[2].id, UQ_OVERSIZED, 'M']], 'added, nothing replaced');
+    assert.deepStrictEqual(closet.items[0], flagged, 'the garment being updated untouched');
+    /* Change on the garment in use, then that garment removed: the Change ends with it */
+    const oversizedId = closet.items[2].id;
+    await one.page.click('.ff-ref--visit .ff-ref-edit');
+    await one.page.waitForSelector('#ffr-pick .ffr-size-pill');
+    await one.page.click(`.ff-closet-item[data-id="${oversizedId}"] .ff-closet-remove`);
+    await one.page.waitForSelector('#ff-reference[data-restore="needs-update"]');
+    assert.strictEqual(await one.page.$('.ffr-cancel'), null, 'no Change form left open');
+    await pickAnchor(one.page, 'zara-00761810-basic-heavyweight-hoodie-us', 'L');
+    await one.page.waitForSelector('.ff-ref--visit[data-remembered="true"]');
+    closet = await closetOf(one.page);
+    assert.deepStrictEqual(closet.items.map((i) => [i.url, i.size]), [[ZARA_BOXY, 'XXL'], [UQ_CREW, 'L'], [ZR_HEAVY, 'L']]);
+    assert.deepStrictEqual(closet.items[0], flagged);
+    await ctx1.close();
+    /* Change begun on one, which another tab then changes: never written over */
+    const three = { v: 2, activeId: 'g_aaaa1111', migratedFrom: null, items: [
+      stored('g_aaaa1111', UQ_CREW, 'UNIQLO', 'Sweatshirt', 'sweatshirts', 'L'),
+      stored('g_bbbb2222', ZR_RELAXED, 'Zara', 'BASIC RELAXED FIT HOODIE', 'hoodies', 'M'),
+      stored('g_cccc3333', ZR_HEAVY, 'Zara', 'BASIC HEAVYWEIGHT HOODIE', 'hoodies', 'L')] };
+    const ctx2 = await openContext({ byHand: false });
+    const two = await seededPage(ctx2, { [CLOSET_KEY]: JSON.stringify(three) });
+    const page = two.page;
+    await page.waitForSelector('#ff-reference[data-restore="restored"]');
+    await page.click('.ff-ref--visit .ff-ref-edit');
+    await page.waitForSelector('#ffr-pick .ffr-size-pill[data-size="M"]');
+    const elsewhere = (k, at, size) => page.evaluate(([key, i, sz]) => { const c = JSON.parse(localStorage.getItem(key)); c.items[i].size = sz; localStorage.setItem(key, JSON.stringify(c)); return c; }, [k, at, size]);
+    const changed = await elsewhere(CLOSET_KEY, 0, 'S');
+    await page.click('#ffr-pick .ffr-size-pill[data-size="M"]');
+    await page.waitForSelector('#ff-closet-full');
+    assert.deepStrictEqual((await closetOf(page)).items, changed.items, 'the changed garment kept; this one asks for a place instead');
+    /* the full-closet choice, gone stale before it is made: nothing replaced, asked again */
+    const changedAgain = await elsewhere(CLOSET_KEY, 1, 'S');
+    await page.click('#ff-closet-full .ff-closet-replace[data-id="g_bbbb2222"]');
+    await page.waitForSelector('#ff-closet-full');
+    assert.deepStrictEqual((await closetOf(page)).items, changedAgain.items);
+    assert.match(await page.textContent('#ff-closet-full .ff-closet-replace[data-id="g_bbbb2222"]'), /size S/, 'asked again with what is saved now');
+    await page.click('.ff-closet-cancel');
+    await page.waitForSelector('.ff-ref--visit');
+    assert.deepStrictEqual((await closetOf(page)).items, changedAgain.items);
+    await ctx2.close();
   }));
 
   await test('an answer for an old choice never shows: the size changed while its comparison is under way — that answer is dropped, the new one compared and shown', () => asChecked(UQ_PAIR, async () => {
