@@ -364,11 +364,11 @@
     use.addEventListener('click', apply);
     actions.append(use);
     area.append(actions);
-    if (from) {
-      /* editing a kept garment: back to it, unchanged */
+    if (from || adding) {
+      /* editing a kept garment, or adding another: back to it, unchanged */
       const cancel = el('button', 'btn btn-secondary ffr-cancel', 'Cancel');
       cancel.type = 'button';
-      cancel.addEventListener('click', () => { editing = false; prefill = null; pick = null; pickAsk += 1; redraw(); });
+      cancel.addEventListener('click', () => { editing = false; adding = false; closetTarget = null; prefill = null; pick = null; pickAsk += 1; redraw(); });
       const cancelRow = el('div', 'ffr-actions ffr-cancel-row');
       cancelRow.append(cancel);
       box.append(cancelRow);
@@ -410,16 +410,12 @@
     visitPick = value;
     try { if (value) global.sessionStorage.setItem(PICK_KEY, JSON.stringify(value)); else global.sessionStorage.removeItem(PICK_KEY); } catch (err) { /* this page only */ }
   }
-  /* ---------- the garment remembered on this device ----------
-     A garment found by search and kept with a size picked is remembered in
-     localStorage under a versioned key — its product's address (and
-     brand id and code, where Fynd's catalogue gave them), what to call it,
-     its kind, line and the size picked. Never measurements: on the next
-     visit it is looked up again exactly as a fresh pick is (POST ?check=1
-     and its listed sizes), and kept through the same checks (apply) — so
-     what Fynd holds for it is always the server's answer of today. Saved
-     data that doesn't read, an old version, a product Fynd no longer
-     lists the size for, or a garment kept another way, is forgotten. */
+  /* ---------- the v1 garment remembered on this device ----------
+     Before the closet (below), one garment found by search and kept with a
+     size picked was remembered under `fynd_saved_garment_v1`:
+       { v: 1, url, brandId, code, name, brand, type, line, size, savedAt }
+     It is only read now, to move it into the closet once; v1 data that
+     doesn't read is dropped. */
   const SAVED_KEY = 'fynd_saved_garment_v1';
   const SAVED_VERSION = 1;
   function readSaved() {
@@ -434,11 +430,163 @@
     if (!ok) { clearSaved(); return null; }
     return v;
   }
-  function writeSaved(v) {
-    try { global.localStorage.setItem(SAVED_KEY, JSON.stringify(Object.assign({ v: SAVED_VERSION }, v, { savedAt: new Date().toISOString() }))); } catch (err) { /* not remembered */ }
-  }
   function clearSaved() {
     try { global.localStorage.removeItem(SAVED_KEY); } catch (err) { /* nothing kept */ }
+  }
+
+  /* ---------- the closet: up to three garments remembered on this device ----------
+     localStorage `fynd_closet_v2`:
+       { v: 2, activeId, items: [{ id, url, brandId, code, name, brand, type,
+         line, size, savedAt, validatedAt, status, problem }], migratedFrom }
+     Each item says only which product it is and the size the shopper
+     picked — never measurements. Before one is used it is checked again
+     with the server (validateItem) and held to the profile's own
+     validator (checked); one that no longer holds is marked as needing an
+     update and kept until the shopper changes or removes it. The default
+     (activeId) is the one used on a return visit. A v1 garment is moved in
+     once, when no closet exists yet; the v1 entry is removed only after
+     the closet has been written and read back. */
+  const CLOSET_KEY = 'fynd_closet_v2';
+  const CLOSET_VERSION = 2;
+  const CLOSET_MAX = 3;
+  /* the fit profile's own sizing lines, 'not-sure' among them (FitProfileSchema SIZING_LINES) */
+  const LINES = ['men', 'women', 'unisex', 'not-sure'];
+  /* one garment: the same product, kind and size — the same product in another size is another garment */
+  const sameGarment = (x, y) => Boolean(x && y) && x.type === y.type && x.size === y.size && sameUrl(x.url, y.url);
+  const optText = (x, max) => x === null || x === undefined || (typeof x === 'string' && x.length <= max);
+  const when = (x) => (typeof x === 'string' && x.length <= 40 && !Number.isNaN(Date.parse(x)) ? x : null);
+  /* one stored item, read field by field: anything else it holds is ignored */
+  function closetItem(x) {
+    if (!x || typeof x !== 'object') return null;
+    if (typeof x.id !== 'string' || !/^g_[a-z0-9]{4,40}$/.test(x.id)) return null;
+    if (typeof x.url !== 'string' || !/^https:\/\//.test(x.url) || x.url.length > 2000) return null;
+    if (!KINDS.includes(x.type) || typeof x.size !== 'string' || !Schema.LETTER_SIZES.includes(x.size)) return null;
+    if (!optText(x.name, 500) || !optText(x.brand, 200) || !optText(x.brandId, 100) || !optText(x.code, 100)) return null;
+    if (!(x.line === null || x.line === undefined || LINES.includes(x.line))) return null;
+    const flagged = x.status === 'needs-update';
+    return {
+      id: x.id, url: x.url, brandId: x.brandId || null, code: x.code || null, name: x.name || null, brand: x.brand || null,
+      type: x.type, line: x.line || null, size: x.size, savedAt: when(x.savedAt), validatedAt: when(x.validatedAt),
+      status: flagged ? 'needs-update' : x.status === 'ok' ? 'ok' : null,
+      problem: flagged && typeof x.problem === 'string' ? x.problem.slice(0, 300) : null
+    };
+  }
+  const emptyCloset = () => ({ v: CLOSET_VERSION, activeId: null, items: [], migratedFrom: null });
+  /* the closet as stored, or null when there is none; one that doesn't read is removed */
+  function readCloset() {
+    let raw = null;
+    try { raw = global.localStorage.getItem(CLOSET_KEY); } catch (err) { return null; }
+    if (raw === null) return null;
+    let v = null;
+    try { v = JSON.parse(raw); } catch (err) { v = null; }
+    if (!v || typeof v !== 'object' || v.v !== CLOSET_VERSION || !Array.isArray(v.items)) {
+      try { global.localStorage.removeItem(CLOSET_KEY); } catch (err) { /* nothing kept */ }
+      return null;
+    }
+    const items = [];
+    v.items.forEach((x) => {
+      const it = closetItem(x);
+      if (it && items.length < CLOSET_MAX && !items.some((o) => o.id === it.id || sameGarment(o, it))) items.push(it);
+    });
+    const activeId = items.some((i) => i.id === v.activeId) ? v.activeId : (items[0] ? items[0].id : null);
+    return { v: CLOSET_VERSION, activeId, items, migratedFrom: v.migratedFrom === 'v1' ? 'v1' : null };
+  }
+  /* kept in this page, and on the device when it can be: true once written and read back */
+  let closet = null;
+  function writeCloset(next) {
+    closet = next;
+    try {
+      const text = JSON.stringify(next);
+      global.localStorage.setItem(CLOSET_KEY, text);
+      return global.localStorage.getItem(CLOSET_KEY) === text;
+    } catch (err) { return false; }
+  }
+  /* the closet now: the device's copy (another tab may have changed it), else this page's */
+  function currentCloset() {
+    const stored = readCloset();
+    if (stored) closet = stored;
+    if (!closet) closet = emptyCloset();
+    return { v: closet.v, activeId: closet.activeId, items: closet.items.map((i) => Object.assign({}, i)), migratedFrom: closet.migratedFrom };
+  }
+  const newId = () => {
+    const c = global.crypto;
+    const raw = c && typeof c.randomUUID === 'function' ? c.randomUUID().replace(/-/g, '') : `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 10)}`;
+    return `g_${raw.toLowerCase().slice(0, 24)}`;
+  };
+  /* the v1 garment's id: the same every time, so moving it in twice makes one item */
+  function legacyId(url, type) {
+    let h = 0x811c9dc5;
+    const s = `${url}|${type}`;
+    for (let i = 0; i < s.length; i += 1) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return `g_v1${h.toString(36)}`;
+  }
+  /* once per page: the closet as stored; else the v1 garment moved into a new one */
+  function migrate() {
+    const existing = readCloset();
+    if (existing) { closet = existing; return existing; }
+    const legacy = readSaved();
+    if (!legacy) return null;
+    const item = closetItem({
+      id: legacyId(legacy.url, legacy.type), url: legacy.url, brandId: legacy.brandId, code: legacy.code, name: legacy.name,
+      brand: legacy.brand, type: legacy.type, line: legacy.line, size: legacy.size,
+      savedAt: when(legacy.savedAt) || new Date().toISOString(), validatedAt: null, status: null
+    });
+    if (!item) return null;
+    const next = { v: CLOSET_VERSION, activeId: item.id, items: [item], migratedFrom: 'v1' };
+    /* the v1 entry goes only once the closet holding it reads back */
+    if (writeCloset(next)) {
+      const back = readCloset();
+      if (back && back.items.some((i) => i.id === item.id)) clearSaved();
+    }
+    return next;
+  }
+  const garmentLabel = (i) => [i.brand, i.name].filter(Boolean).join(' · ') || cap(Schema.garmentOf(i.type).one);
+  /* the closet item this visit's garment is, or null (a garment entered by hand never is) */
+  function inUseItem() {
+    const a = visit && visit.garment && visit.garment.anchor;
+    if (!a || a.measurements || !a.product || !a.product.url || !closet) return null;
+    return closet.items.find((i) => i.type === visit.type && i.size === a.size && sameUrl(i.url, a.product.url)) || null;
+  }
+  /* A garment found and its size picked, put in the closet:
+       target { mode: 'use', id }      that item, checked again (the same garment only)
+       target { mode: 'replace', id }  that item, changed to this garment
+       otherwise                       the same garment's item (product and size), or a new one while there's room
+     'full' when there's no room — nothing is overwritten, another size of a product held included. */
+  function remember(entry, target) {
+    const c = currentCloset();
+    const now = new Date().toISOString();
+    const fresh = (old) => Object.assign({ id: old ? old.id : newId(), savedAt: old && sameGarment(old, entry) && old.savedAt ? old.savedAt : now },
+      entry, { validatedAt: now, status: 'ok', problem: null });
+    let at = -1;
+    if (target && target.id) {
+      const t = c.items.findIndex((i) => i.id === target.id);
+      /* a replacement only of the very item the flow began with: gone, or changed
+         since (another tab, say), and this garment is saved as any new one is */
+      const intact = t >= 0 && (target.mode !== 'replace' || sameGarment(c.items[t], target));
+      if (intact && (target.mode === 'replace' || sameGarment(c.items[t], entry))) at = t;
+    }
+    if (at < 0) at = c.items.findIndex((i) => sameGarment(i, entry));
+    if (at < 0 && c.items.length >= CLOSET_MAX) return 'full';
+    const item = fresh(at >= 0 ? c.items[at] : null);
+    if (at >= 0) c.items[at] = item; else c.items.push(item);
+    /* one item per garment: another now holding the very same one (product and size) is merged, its default passed on */
+    c.items = c.items.filter((i) => {
+      const twin = i.id !== item.id && sameGarment(i, item);
+      if (twin && c.activeId === i.id) c.activeId = item.id;
+      return !twin;
+    });
+    if (!c.activeId || !c.items.some((i) => i.id === c.activeId)) c.activeId = item.id;
+    writeCloset(c);
+    return item;
+  }
+  /* an item that no longer holds: marked, never removed */
+  function flagItem(id, problem) {
+    const c = currentCloset();
+    const it = c.items.find((i) => i.id === id);
+    if (!it) return;
+    it.status = 'needs-update';
+    it.problem = problem;
+    writeCloset(c);
   }
   const sameUrl = (x, y) => {
     const n = (u) => String(u || '').trim().replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
@@ -906,16 +1054,39 @@
     const heldBox = doc.getElementById('ffr-held');
     const heldNow = picked && heldBox && !heldBox.hidden && heldBox.dataset.status && heldBox.dataset.status !== 'checking'
       ? { status: heldBox.dataset.status, text: (heldBox.firstChild && heldBox.firstChild.textContent) || '' } : null;
-    keepPick(picked ? { url: picked.url, name: picked.name, brand: picked.brand, sizes: picked.sizes, held: heldNow } : null);
-    /* remembered on this device: a garment found and its size picked, with no
-       measurements of the shopper's (those are never stored here) — any
-       other garment kept replaces what was remembered */
+    const pickValue = picked ? { url: picked.url, name: picked.name, brand: picked.brand, sizes: picked.sizes, held: heldNow } : null;
+    const value = checked(said);
+    const target = closetTarget;
+    closetTarget = null;
+    /* into the closet on this device: a garment found and its size picked, with
+       no measurements of the shopper's (those are never stored here). A garment
+       entered by hand is for this visit only, and leaves the closet as it is */
     if (picked && !said.garment.anchor.measurements && said.garment.anchor.size) {
-      writeSaved({ url: picked.url, brandId: picked.brandId || null, code: picked.code || null, name: picked.name || null, brand: picked.brand || said.garment.anchor.brand || null, type: said.type, line: said.garment.line || null, size: said.garment.anchor.size });
-    } else clearSaved();
+      const entry = { url: picked.url, brandId: picked.brandId || null, code: picked.code || null, name: picked.name || null, brand: picked.brand || said.garment.anchor.brand || null, type: said.type, line: said.garment.line || null, size: said.garment.anchor.size };
+      if (remember(entry, target) === 'full') {
+        /* three already: which one to replace, or compare this one once — nothing overwritten */
+        pendingFull = { value, pickValue, entry };
+        pick = null;
+        editing = false;
+        adding = false;
+        prefill = null;
+        redraw();
+        global.setTimeout(() => { const f = doc.querySelector('#ff-closet-full button'); if (f) f.focus(); }, 0);
+        return;
+      }
+    }
+    commit(value, pickValue, quiet);
+  }
+  /* a garment kept: used for this visit, and the section drawn with it */
+  function commit(value, pickValue, quiet) {
+    closetTarget = null;
+    keepPick(pickValue);
     pick = null;
-    keep(checked(said), 'shopper');
+    pendingFull = null;
+    closetNote = null;
+    keep(value, 'shopper');
     editing = false;
+    adding = false;
     prefill = null;
     redraw();
     /* on to the item, when it hasn't been given yet — never when restoring by itself */
@@ -923,45 +1094,314 @@
     if (!quiet && next && !next.value && !(global.FindFitItem && global.FindFitItem.state() !== 'none')) next.focus();
   }
 
-  /* ---------- restoring the remembered garment ----------
-     Looked up again as a fresh pick is, its size kept only if Fynd still
-     lists it for that product, and kept through apply's own checks. A
-     check that can't be made now leaves it unused (and remembered) with
-     the shopper told; anything that no longer holds is forgotten. */
+  /* ---------- using a garment from the closet ----------
+     Never on what the device remembers alone: the server is asked again
+     what it holds for that product (POST ?check=1, as a fresh pick is),
+     its sizes looked up again (sizesFor), and the garment held to the fit
+     profile's own validator (checked) — the same three a pick goes
+     through before apply keeps it. One that no longer holds is marked as
+     needing an update, kept, and not used; nothing is compared on it. */
+  /* the closet item a Change or Update is replacing: which one, and what it held
+     when the flow began — so a stale flow never writes over another garment */
+  let closetTarget = null;
+  const replaceTarget = (item) => ({ mode: 'replace', id: item.id, url: item.url, type: item.type, size: item.size });
+  let pendingFull = null;
+  let adding = false;
+  let checkingId = null;
+  let closetNote = null;
+  let useAsk = 0;
+  /* items whose check couldn't be made on this page: said so, never stored */
+  const unreachable = new Set();
+  /* Whether the server answered, and what: a closet item is marked as needing an
+     update only on the server's own answer — a request that fails, times out
+     or meets a server error says nothing about the garment, and leaves it
+     as it was (reason 'unreachable'), unused this time. */
+  const UNREACHABLE = 'Fynd couldn’t reach its server to check it just now, so it isn’t used yet. It’s still saved — choose it again to try once more.';
+  const answered = (got) => Boolean(got && got.ok && got.data && typeof got.data === 'object');
+  /* The sizes Fynd lists for a closet item, from the same two places as
+     sizesFor (its checked record, else its brand's product page), and
+     whether that is the server's own answer: { sure: true, sizes } or
+     { sure: false } when neither could be asked. */
+  async function listedSizes(item) {
+    await anchorsReady;
+    /* the records' list failed when the page opened: asked once more */
+    if (!anchorsLoaded) { try { await loadAnchorList(); } catch (err) { /* still unanswered */ } }
+    const record = anchors.find((x) => sameUrl(x.url, item.url));
+    if (record && Array.isArray(record.sizes) && record.sizes.length) return { sure: true, sizes: record.sizes.filter((x) => typeof x === 'string' && x) };
+    const sizing = global.Account && global.Account.sizing;
+    if (item.brandId && item.code && sizing && sizing.detail) {
+      let got = null;
+      try { got = await sizing.detail(item.brandId, item.code); } catch (err) { got = null; }
+      if (answered(got)) {
+        const list = got.data.product && got.data.product.sizes && got.data.product.sizes.list;
+        return { sure: true, sizes: Array.isArray(list) && list.length ? list.filter((x) => typeof x === 'string' && x) : null };
+      }
+      /* the server says plainly it lists no such product or brand */
+      if (got && got.status === 404 && got.data && ['unknown-product', 'unknown-brand'].includes(got.data.reason)) return { sure: true, sizes: null };
+      return { sure: false };
+    }
+    /* a record's garment: the records' own list, answered without it, is the answer */
+    return anchorsLoaded ? { sure: true, sizes: null } : { sure: false };
+  }
+  async function validateItem(item) {
+    const sizing = global.Account && global.Account.sizing;
+    const target = item.brandId && item.code ? { brand: item.brandId, code: item.code } : { url: item.url };
+    let got = null;
+    let listed = { sure: false };
+    try {
+      [got, listed] = await Promise.all([
+        sizing && sizing.check ? sizing.check(target, null) : null,
+        listedSizes(item).catch(() => ({ sure: false }))
+      ]);
+    } catch (err) { got = null; }
+    const check = answered(got) && got.data.check;
+    if (!check || typeof check !== 'object') return { ok: false, reason: 'unreachable', text: UNREACHABLE };
+    let held = null;
+    try { held = heldSay(check); } catch (err) { held = null; }
+    if (!held) return { ok: false, reason: 'unreachable', text: UNREACHABLE };
+    if (held[0] === 'not-covered') return { ok: false, reason: 'not-covered', text: 'Fynd doesn’t compare this kind of garment any more. Replace it or remove it.' };
+    if (!listed || !listed.sure) return { ok: false, reason: 'unreachable', text: UNREACHABLE };
+    const sizes = listed.sizes;
+    if (!sizes || !sizes.some((l) => keepable(l) === item.size)) return { ok: false, reason: 'size-missing', text: `Size ${item.size} isn’t listed for this garment any more. Update it with the size you own, or remove it.` };
+    const value = checked({ type: item.type, garment: { favorite: 'perfect', line: item.line || null, anchor: { brand: item.brand || null, size: item.size, product: { url: item.url } } } });
+    if (!value) return { ok: false, reason: 'invalid', text: 'This garment can’t be used as it was saved. Update it or remove it.' };
+    return { ok: true, value, sizes, held: { status: held[0], text: held[1] } };
+  }
+  /* one closet item, checked again and then used: how is 'restore' (a return visit) or 'switch' (chosen) */
+  async function useItem(id, how) {
+    const item = currentCloset().items.find((i) => i.id === id);
+    if (!item) return;
+    const now = inUseItem();
+    /* already being checked: no second request */
+    if (checkingId === id) return;
+    /* already in use: nothing to ask — and a switch to another still being checked is called off */
+    if (now && now.id === id && !editing && !adding && !pendingFull) {
+      if (checkingId) { useAsk += 1; checkingId = null; root.dataset.restore = 'superseded'; drawCloset(); }
+      return;
+    }
+    /* switching: any Change, Update, Add another or full-closet choice is left, its target with it */
+    if (how === 'switch') {
+      closetTarget = null;
+      if (editing || adding || pendingFull) {
+        editing = false;
+        adding = false;
+        pendingFull = null;
+        prefill = null;
+        pick = null;
+        pickAsk += 1;
+        redraw();
+      }
+    }
+    const mine = ++useAsk;
+    const pickedAt = pickAsk;
+    checkingId = id;
+    closetNote = null;
+    root.dataset.restore = 'checking';
+    drawCloset();
+    const r = await validateItem(item);
+    /* another garment chosen meanwhile: that one wins */
+    if (mine !== useAsk) return;
+    checkingId = null;
+    /* the shopper moved on (a new search, or a garment kept another way): theirs wins */
+    if (pickedAt !== pickAsk || (how === 'restore' && visit)) { root.dataset.restore = 'superseded'; drawCloset(); return; }
+    if (!r.ok) {
+      /* only the server's own answer marks it; a failed request leaves it as saved */
+      if (r.reason === 'unreachable') unreachable.add(id);
+      else { unreachable.delete(id); flagItem(id, r.text); }
+      closetNote = { id, text: `${garmentLabel(item)}, size ${item.size}: ${r.text}` };
+      root.dataset.restore = r.reason === 'unreachable' ? 'unchecked' : 'needs-update';
+      redraw();
+      return;
+    }
+    unreachable.delete(id);
+    remember({ url: item.url, brandId: item.brandId, code: item.code, name: item.name, brand: item.brand, type: item.type, line: item.line, size: item.size }, { mode: 'use', id });
+    visitHow = 'search';
+    commit(r.value, { url: item.url, name: item.name, brand: item.brand, sizes: r.sizes, held: r.held }, true);
+    root.dataset.restore = 'restored';
+  }
+  /* a return visit: the default garment, once */
   let restoreTried = false;
-  async function restoreSaved() {
+  function restoreSaved() {
     if (restoreTried) return;
     restoreTried = true;
-    const s = readSaved();
-    if (!s) return;
+    const c = migrate();
+    if (!c || !c.activeId) return;
+    useItem(c.activeId, 'restore');
+  }
+  /* one item taken out; the default, when it goes, passes to the first remaining that holds */
+  function removeItem(id) {
+    const c = currentCloset();
+    if (!c.items.some((i) => i.id === id)) return;
+    const wasInUse = Boolean(inUseItem() && inUseItem().id === id);
+    c.items = c.items.filter((i) => i.id !== id);
+    if (c.activeId === id) c.activeId = ((c.items.find((i) => i.status !== 'needs-update') || c.items[0]) || {}).id || null;
+    writeCloset(c);
+    if (checkingId === id) { checkingId = null; useAsk += 1; }
+    if (closetNote && closetNote.id === id) closetNote = null;
+    unreachable.delete(id);
+    /* the item a Change or Update was replacing is gone: that flow ends with it */
+    if (closetTarget && closetTarget.id === id) {
+      closetTarget = null;
+      editing = false;
+      prefill = null;
+      pick = null;
+      pickAsk += 1;
+    }
+    if (!wasInUse) { redraw(); return; }
+    keep(null, 'shopper');
+    keepPick(null);
+    pick = null;
+    redraw();
+    const next = c.items.find((i) => i.id === c.activeId);
+    if (next) useItem(next.id, 'switch');
+    else { const f = doc.getElementById('ffr-search'); if (f) f.focus(); }
+  }
+  function setDefault(id) {
+    const c = currentCloset();
+    if (!c.items.some((i) => i.id === id) || c.activeId === id) return;
+    c.activeId = id;
+    writeCloset(c);
+    redraw();
+  }
+  /* a closet item to change: found again through the usual pick, its size picked anew */
+  function updateItem(id) {
+    const item = currentCloset().items.find((i) => i.id === id);
+    if (!item) return;
+    useAsk += 1;
+    checkingId = null;
+    pendingFull = null;
+    adding = false;
+    editing = true;
+    prefill = { type: item.type, garment: { favorite: 'perfect', line: item.line || null, anchor: { brand: item.brand, size: null, product: { url: item.url } } } };
+    pick = null;
+    redraw();
+    closetTarget = replaceTarget(item);
     const search = doc.getElementById('ffr-search');
     const held = doc.getElementById('ffr-held');
-    if (!search || !held) return;
-    search.value = [s.brand, s.name].filter(Boolean).join(' · ');
-    root.dataset.restore = 'checking';
-    const product = { name: s.name, url: s.url, category: s.type, line: s.line, code: s.code || null };
-    await usePicked({ brand: { id: s.brandId || null, name: s.brand || '' }, product }, null, search, held);
-    const mine = pickAsk;
-    await pickDone;
-    /* the shopper moved on while it was looked up: theirs wins */
-    if (mine !== pickAsk || !pick || !sameUrl(pick.url, s.url) || visit) { root.dataset.restore = 'superseded'; return; }
-    const say = (text) => { held.append(el('p', 'ffr-held-size ffr-restore-note', text)); };
-    if (held.dataset.status === 'unknown') {
-      root.dataset.restore = 'unchecked';
-      say(`Your saved garment couldn’t be checked just now, so it isn’t used yet. Pick size ${s.size} to use it, or search for another.`);
-      return;
+    if (search && held) {
+      pickedHow = 'search';
+      usePicked({ brand: { id: item.brandId || null, name: item.brand || '' }, product: { name: item.name, url: item.url, category: item.type, line: item.line, code: item.code } }, null, search, held);
     }
-    if (held.dataset.status === 'not-covered') { clearSaved(); root.dataset.restore = 'forgotten'; return; }
-    const button = pick.status === 'ready' ? [...doc.querySelectorAll('#ffr-pick .ffr-size-pill:not([disabled])')].find((b) => keepable(b.dataset.size) === s.size) : null;
-    if (!button) {
-      clearSaved();
-      root.dataset.restore = 'forgotten';
-      say(`Size ${s.size} isn’t listed for this garment any more. Pick the size you own.`);
-      return;
+  }
+
+  /* the closet, drawn above the garment: each item one click to use, the default marked */
+  function closetBox() {
+    const c = closet;
+    if (!c || !c.items.length) return null;
+    const box = el('div', 'ff-closet');
+    box.id = 'ff-closet';
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-labelledby', 'ff-closet-title');
+    const head = el('p', 'ff-closet-title', 'Your closet');
+    head.id = 'ff-closet-title';
+    head.append(el('span', 'ff-closet-count', ` · ${c.items.length} of ${CLOSET_MAX}, on this device`));
+    const list = el('ul', 'ff-closet-list');
+    const now = inUseItem();
+    c.items.forEach((item) => {
+      const li = el('li', 'ff-closet-item');
+      li.dataset.id = item.id;
+      li.dataset.default = String(item.id === c.activeId);
+      li.dataset.inUse = String(Boolean(now && now.id === item.id));
+      if (item.status === 'needs-update') li.dataset.status = 'needs-update';
+      else if (unreachable.has(item.id)) li.dataset.status = 'unreachable';
+      if (checkingId === item.id) li.dataset.checking = 'true';
+      const use = el('button', 'ff-closet-use');
+      use.type = 'button';
+      use.setAttribute('aria-pressed', String(Boolean(now && now.id === item.id)));
+      use.append(el('span', 'ff-closet-name', garmentLabel(item)), el('span', 'ff-closet-size', `Size ${item.size}`));
+      if (item.id === c.activeId) use.append(el('span', 'ff-closet-badge', 'Default'));
+      if (checkingId === item.id) use.append(el('span', 'ff-closet-flag', 'Checking…'));
+      else if (item.status === 'needs-update') use.append(el('span', 'ff-closet-flag ff-closet-flag--warn', 'Needs update'));
+      else if (unreachable.has(item.id)) use.append(el('span', 'ff-closet-flag', 'Couldn’t check'));
+      use.addEventListener('click', () => useItem(item.id, 'switch'));
+      const tools = el('span', 'ff-closet-tools');
+      if (item.status === 'needs-update') {
+        const upd = el('button', 'link-btn ff-closet-update', 'Update');
+        upd.type = 'button';
+        upd.setAttribute('aria-label', `Update ${garmentLabel(item)}, size ${item.size}`);
+        upd.addEventListener('click', () => updateItem(item.id));
+        tools.append(upd);
+      }
+      const rm = el('button', 'link-btn ff-closet-remove', 'Remove');
+      rm.type = 'button';
+      rm.setAttribute('aria-label', `Remove ${garmentLabel(item)}, size ${item.size}, from your closet`);
+      rm.addEventListener('click', () => removeItem(item.id));
+      tools.append(rm);
+      li.append(use, tools);
+      list.append(li);
+    });
+    box.append(head, list);
+    if (closetNote) {
+      const n = el('p', 'ff-closet-note', closetNote.text);
+      n.id = 'ff-closet-note';
+      n.setAttribute('role', 'status');
+      box.append(n);
     }
-    chooseSize(s.size, button, true);
-    root.dataset.restore = visit ? 'restored' : 'failed';
-    if (!visit) clearSaved();
+    /* another garment: added while there's room; once full, picked and then placed (fullPrompt) */
+    if (visit && !editing && !adding && !pendingFull) {
+      const add = el('button', 'link-btn ff-closet-add', c.items.length < CLOSET_MAX ? '+ Add another' : 'Use a different garment');
+      add.type = 'button';
+      add.addEventListener('click', () => {
+        adding = true;
+        editing = false;
+        prefill = null;
+        pick = null;
+        closetTarget = null;
+        pickAsk += 1;
+        redraw();
+        const f = doc.getElementById('ffr-search');
+        if (f) f.focus();
+      });
+      box.append(add);
+    }
+    return box;
+  }
+  function drawCloset() {
+    const old = doc.getElementById('ff-closet');
+    const next = closetBox();
+    if (old && next) old.replaceWith(next);
+    else if (old) old.remove();
+    else if (next && root.dataset.state !== 'saved' && root.dataset.state !== 'error') root.prepend(next);
+  }
+  /* a full closet and another garment picked: replace one, or compare it once */
+  function fullPrompt() {
+    const p = pendingFull;
+    const box = el('div', 'ff-closet-full');
+    box.id = 'ff-closet-full';
+    box.setAttribute('role', 'group');
+    box.setAttribute('aria-labelledby', 'ff-closet-full-title');
+    const title = el('p', 'ff-closet-full-title', `Your closet already holds ${CLOSET_MAX} garments.`);
+    title.id = 'ff-closet-full-title';
+    box.append(title, el('p', 'ffr-hint', `Replace one with ${garmentLabel(p.entry)}, size ${p.entry.size} — or compare it once without saving it. Nothing is replaced until you choose.`));
+    const list = el('div', 'ff-closet-full-list');
+    currentCloset().items.forEach((item) => {
+      const b = el('button', 'btn btn-secondary ff-closet-replace', `Replace ${garmentLabel(item)}, size ${item.size}`);
+      b.type = 'button';
+      b.dataset.id = item.id;
+      b.addEventListener('click', () => {
+        const c = currentCloset();
+        const at = c.items.findIndex((i) => i.id === item.id);
+        if (!pendingFull) return;
+        /* gone, or changed since the choice was drawn: asked again, nothing replaced */
+        if (at < 0 || !sameGarment(c.items[at], item)) { redraw(); return; }
+        const stamp = new Date().toISOString();
+        const fresh = Object.assign({ id: newId(), savedAt: stamp }, pendingFull.entry, { validatedAt: stamp, status: 'ok', problem: null });
+        if (c.activeId === item.id) c.activeId = fresh.id;
+        c.items[at] = fresh;
+        writeCloset(c);
+        visitHow = pickedHow || 'search';
+        commit(pendingFull.value, pendingFull.pickValue, false);
+      });
+      list.append(b);
+    });
+    const once = el('button', 'btn btn-secondary ff-closet-once', 'Compare once without saving');
+    once.type = 'button';
+    once.addEventListener('click', () => { if (!pendingFull) return; visitHow = pickedHow || 'search'; commit(pendingFull.value, pendingFull.pickValue, false); });
+    const cancel = el('button', 'link-btn ff-closet-cancel', 'Cancel');
+    cancel.type = 'button';
+    cancel.addEventListener('click', () => { pendingFull = null; closetTarget = null; redraw(); });
+    box.append(list, once, cancel);
+    return box;
   }
 
   /* ---------- drawing ---------- */
@@ -1003,15 +1443,24 @@
     const actions = el('span', 'ff-ref-actions');
     /* found by search: the product's own name and the size picked */
     const named = visitPick && a.product && a.product.url && sameUrl(visitPick.url, a.product.url) && visitPick.name ? visitPick : null;
-    const saved = readSaved();
-    const remembered = Boolean(named && saved && sameUrl(saved.url, named.url) && saved.size === a.size && saved.type === value.type);
+    const item = inUseItem();
+    const remembered = Boolean(named && item);
     top.append(el('span', 'ff-ref-kind', remembered ? cap(g.one) : `${cap(g.one)} · this visit`));
+    if (remembered && closet && closet.activeId !== item.id) {
+      const def = el('button', 'link-btn ff-ref-default', 'Set as default');
+      def.type = 'button';
+      def.setAttribute('aria-label', 'Use this garment first on your next visit');
+      def.addEventListener('click', () => setDefault(item.id));
+      actions.append(def);
+    }
     const edit = el('button', 'link-btn ff-ref-edit', 'Change');
     edit.type = 'button';
     edit.setAttribute('aria-label', 'Change your garment or its size');
     edit.addEventListener('click', () => {
       editing = true;
       pickAsk += 1;
+      /* a closet garment changed: that item is replaced by what's picked — none added */
+      closetTarget = remembered ? replaceTarget(item) : null;
       /* its sizes again, to change the size — or the search, to change the garment */
       pick = named ? { url: named.url, name: named.name, brand: named.brand, sizes: named.sizes || null, status: named.sizes && named.sizes.length ? 'ready' : 'none' } : null;
       redraw();
@@ -1026,7 +1475,12 @@
     const remove = el('button', 'link-btn ff-ref-remove', 'Remove');
     remove.type = 'button';
     remove.setAttribute('aria-label', 'Remove your garment');
-    remove.addEventListener('click', () => { keep(null, 'shopper'); keepPick(null); clearSaved(); pick = null; redraw(); const f = doc.getElementById('ffr-search') || doc.getElementById('ffr-brand'); if (f) f.focus(); });
+    remove.setAttribute('aria-label', remembered ? 'Remove your garment from your closet' : 'Remove your garment');
+    remove.addEventListener('click', () => {
+      /* a closet garment: out of the closet, and the default (or the first that holds) used next */
+      if (remembered) { removeItem(item.id); return; }
+      keep(null, 'shopper'); keepPick(null); pick = null; redraw(); const f = doc.getElementById('ffr-search') || doc.getElementById('ffr-brand'); if (f) f.focus();
+    });
     actions.append(edit, remove);
     top.append(actions);
     card.append(top);
@@ -1050,7 +1504,8 @@
       card.append(el('p', 'ff-ref-detail', said.measurements ? `Measured: ${said.measurements}` : missingDimensions(Boolean(said.product))));
     }
     card.dataset.remembered = String(remembered);
-    card.append(el('p', 'ff-ref-status', remembered ? 'Remembered on this device. Not saved to an account.' : 'Kept for this visit. Not saved to an account.'));
+    card.append(el('p', 'ff-ref-status', remembered ? 'Remembered on this device. Not saved to an account.'
+      : named && closet && closet.items.length >= CLOSET_MAX ? 'Compared once: not saved to your closet.' : 'Kept for this visit. Not saved to an account.'));
     return card;
   }
 
@@ -1079,7 +1534,12 @@
   function unsavedState() {
     homeAnchors();
     const nodes = [];
-    if (visit && !editing) nodes.push(visitCard(visit));
+    if (!closet) closet = readCloset();
+    const shelf = closetBox();
+    if (shelf) nodes.push(shelf);
+    if (pendingFull) nodes.push(fullPrompt());
+    else if (adding) nodes.push(form(null));
+    else if (visit && !editing) nodes.push(visitCard(visit));
     else if (editing) nodes.push(form(prefill || visit));
     else nodes.push(form(prefill));
     root.dataset.locked = 'false';
@@ -1180,6 +1640,8 @@
   const anchorsBox = doc.getElementById('ff-anchors');
   const anchorList = anchorsBox && anchorsBox.querySelector('.ff-anchor-list');
   let anchors = [];
+  /* whether the records' list was answered (an empty list is an answer; a failed request isn't) */
+  let anchorsLoaded = false;
   /* only what the server listed, each with what a garment needs: a kind
      the form takes, a brand, a name and its brand's https page */
   const usable = (a) => a && typeof a.id === 'string' && KINDS.includes(a.category) && typeof a.brand === 'string' && a.brand
@@ -1196,7 +1658,7 @@
   function drawAnchors() {
     if (!anchorsBox || !anchorList) return;
     const show = anchors.length > 0 && root.dataset.state !== 'saved' && root.dataset.state !== 'error'
-      && !(visit && !editing) && !pick;
+      && !(visit && !editing && !adding) && !pick && !pendingFull;
     anchorsBox.hidden = !show;
     if (show && anchorList.childElementCount !== anchors.length) anchorList.replaceChildren(...anchors.map(anchorCard));
   }
@@ -1209,6 +1671,7 @@
     const sizing = global.Account && global.Account.sizing;
     const got = sizing && sizing.anchors ? await sizing.anchors() : null;
     anchors = got && got.ok && got.data && Array.isArray(got.data.anchors) ? got.data.anchors.filter(usable) : [];
+    anchorsLoaded = Boolean(got && got.ok && got.data && Array.isArray(got.data.anchors));
     if (anchorsBox) anchorsBox.dataset.state = 'ready';
     drawAnchors();
   }
@@ -1218,6 +1681,8 @@
     const line = ['men', 'women', 'unisex'].includes(a.line) ? a.line : null;
     prefill = { type: a.category, garment: { favorite: 'perfect', line, anchor: { brand: a.brand, size: null, product: { url: a.url } } } };
     editing = true;
+    /* adding to the closet: the form is drawn from this anchor now */
+    adding = false;
     pickAsk += 1;
     pickedHow = 'search';
     const sizes = Array.isArray(a.sizes) ? a.sizes.filter((x) => typeof x === 'string' && x) : [];
@@ -1242,6 +1707,7 @@
   }
 
   let asked = 0;
+  let migrated = false;
   async function refresh() {
     const ask = ++asked;
     const account = global.Account;
@@ -1256,6 +1722,8 @@
     }
     /* the header's account link, where a shopper looks for it: "Sign in" while signed out */
     doc.querySelectorAll('.nav-links a[href="account.html"], .footer-links a[href="account.html"]').forEach((n) => { n.textContent = signedIn ? 'Account' : 'Sign in'; });
+    /* the closet read (and a v1 garment moved in) before anything is drawn */
+    if (!migrated) { migrated = true; migrate(); }
     if (!signedIn) { unsavedState(); changed(); if (!visit) restoreSaved(); return; }
     const got = await account.fitProfile.read();
     if (ask !== asked) return;
@@ -1295,9 +1763,12 @@
     refresh,
     unsaved: () => (savedInUse ? null : visit),
     current: () => visit,
-    forget: () => { keep(null); keepPick(null); clearSaved(); redraw(); },
-    /* the garment remembered on this device, as stored (for tests and the page) */
-    remembered: () => readSaved(),
+    /* this visit's garment only: the closet on this device stays as it is */
+    forget: () => { closetTarget = null; keep(null); keepPick(null); redraw(); },
+    /* the closet on this device, as stored (for tests and the page) */
+    closet: () => readCloset(),
+    /* the closet's default garment, as stored */
+    remembered: () => { const c = readCloset(); return c && c.activeId ? c.items.find((i) => i.id === c.activeId) || null : null; },
     savedProfile: () => lastProfile,
     unlock: () => {},
     locked: () => false,
