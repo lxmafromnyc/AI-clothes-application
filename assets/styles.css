@@ -2332,3 +2332,38 @@ strong { font-weight: 600; }
 .ff .ff-ref-held { color: var(--color-text-2); }
 .ff .ff-ref-held[data-status="checked"] { color: var(--color-success-ink); }
 .ff .ff-ref-name .ff-ref-size { font-weight: 500; color: var(--color-text-2); }
+
+/* ---------- the closet: up to three garments on this device ----------
+   Each a compact card, one click to use; the default marked, one that
+   needs an update said so — never hidden. */
+.ff .ff-closet { display: grid; gap: 8px; margin-bottom: 12px; }
+.ff .ff-closet-title { font-size: 13px; font-weight: 600; letter-spacing: .02em; color: var(--color-text); }
+.ff .ff-closet-count { font-weight: 400; color: var(--color-text-muted); }
+.ff .ff-closet-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ff .ff-closet-item { display: flex; align-items: center; gap: 8px; }
+.ff .ff-closet-use {
+  flex: 1 1 200px; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 8px;
+  padding: 8px 12px; border: 1px solid var(--color-border-strong); border-radius: var(--r-sm);
+  background: var(--color-surface); color: var(--color-text); font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+}
+.ff .ff-closet-use:hover { border-color: var(--color-accent-line); }
+.ff .ff-closet-use[aria-pressed="true"] { border-color: var(--color-accent); background: var(--color-accent-soft); box-shadow: inset 0 0 0 1px var(--color-accent); }
+.ff .ff-closet-name { font-weight: 600; overflow-wrap: anywhere; }
+.ff .ff-closet-size { color: var(--color-text-2); }
+.ff .ff-closet-badge, .ff .ff-closet-flag { padding: 1px 7px; border-radius: 999px; font-size: 11.5px; font-weight: 600; letter-spacing: .02em; }
+.ff .ff-closet-badge { background: var(--color-accent-soft); color: var(--color-accent-ink); border: 1px solid var(--color-accent-line); }
+.ff .ff-closet-flag { color: var(--color-text-2); border: 1px solid var(--color-border); }
+.ff .ff-closet-flag--warn { color: var(--color-warning-ink); background: var(--color-warning-soft); border-color: var(--color-warning-line); }
+.ff .ff-closet-tools { display: flex; gap: 10px; flex: none; }
+.ff .ff-closet-tools .link-btn, .ff .ff-closet-add, .ff .ff-ref-default { font-size: 13.5px; font-weight: 500; }
+.ff .ff-closet-add { justify-self: start; }
+.ff .ff-closet-note { padding: 8px 12px; border: 1px solid var(--color-warning-line); border-radius: var(--r-sm); background: var(--color-warning-soft); font-size: 13.5px; color: var(--color-warning-ink); }
+.ff .ff-closet-full { display: grid; gap: 10px; padding: 14px; border: 1px solid var(--color-warning-line); border-radius: var(--r); background: var(--color-warning-soft); }
+.ff .ff-closet-full-title { font-weight: 600; color: var(--color-text); }
+.ff .ff-closet-full-list { display: grid; gap: 6px; }
+.ff .ff-closet-full .btn { justify-content: flex-start; text-align: left; white-space: normal; }
+.ff .ff-closet-cancel { justify-self: start; }
+@media (max-width: 560px) {
+  .ff .ff-closet-item { flex-wrap: wrap; }
+  .ff .ff-closet-tools { margin-left: auto; }
+}
