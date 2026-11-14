@@ -2313,3 +2313,22 @@ strong { font-weight: 600; }
   .ff .ff-step { padding: 18px 16px 20px; border-radius: 16px; }
   .ff .ffr-manual-area { padding: 14px; }
 }
+
+/* ---------- Find Fit on a desktop: one workspace ----------
+   The item and the garment side by side, the action and the result
+   straight beneath them, so both choices and the answer are in view
+   together. Below 960px the cards stack as before. */
+@media (min-width: 960px) {
+  .ff .ff-hero { padding-block: 24px 16px; }
+  .ff .ff-flow {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start;
+    gap: 20px; max-width: 1040px; margin-top: 24px;
+  }
+  .ff .ff-flow > .ff-setup, .ff .ff-flow > .ff-action { grid-column: 1 / -1; }
+  .ff .ff-result { max-width: calc(1040px + 2 * var(--pad)); margin-top: 20px; }
+  /* the result's own card, widest where it has room */
+  .ff .ff-result-card { padding: 24px 28px; }
+}
+.ff .ff-ref-held { color: var(--color-text-2); }
+.ff .ff-ref-held[data-status="checked"] { color: var(--color-success-ink); }
+.ff .ff-ref-name .ff-ref-size { font-weight: 500; color: var(--color-text-2); }

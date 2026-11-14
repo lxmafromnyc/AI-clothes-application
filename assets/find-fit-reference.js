@@ -410,6 +410,36 @@
     visitPick = value;
     try { if (value) global.sessionStorage.setItem(PICK_KEY, JSON.stringify(value)); else global.sessionStorage.removeItem(PICK_KEY); } catch (err) { /* this page only */ }
   }
+  /* ---------- the garment remembered on this device ----------
+     A garment found by search and kept with a size picked is remembered in
+     localStorage under a versioned key — its product's address (and
+     brand id and code, where Fynd's catalogue gave them), what to call it,
+     its kind, line and the size picked. Never measurements: on the next
+     visit it is looked up again exactly as a fresh pick is (POST ?check=1
+     and its listed sizes), and kept through the same checks (apply) — so
+     what Fynd holds for it is always the server's answer of today. Saved
+     data that doesn't read, an old version, a product Fynd no longer
+     lists the size for, or a garment kept another way, is forgotten. */
+  const SAVED_KEY = 'fynd_saved_garment_v1';
+  const SAVED_VERSION = 1;
+  function readSaved() {
+    let raw = null;
+    try { raw = global.localStorage.getItem(SAVED_KEY); } catch (err) { return null; }
+    if (raw === null) return null;
+    let v = null;
+    try { v = JSON.parse(raw); } catch (err) { v = null; }
+    const ok = v && typeof v === 'object' && v.v === SAVED_VERSION && typeof v.url === 'string' && /^https:\/\//.test(v.url) && v.url.length <= 2000
+      && KINDS.includes(v.type) && typeof v.size === 'string' && Schema.LETTER_SIZES.includes(v.size)
+      && (v.name === null || typeof v.name === 'string') && (v.brand === null || typeof v.brand === 'string');
+    if (!ok) { clearSaved(); return null; }
+    return v;
+  }
+  function writeSaved(v) {
+    try { global.localStorage.setItem(SAVED_KEY, JSON.stringify(Object.assign({ v: SAVED_VERSION }, v, { savedAt: new Date().toISOString() }))); } catch (err) { /* not remembered */ }
+  }
+  function clearSaved() {
+    try { global.localStorage.removeItem(SAVED_KEY); } catch (err) { /* nothing kept */ }
+  }
   const sameUrl = (x, y) => {
     const n = (u) => String(u || '').trim().replace(/[?#].*$/, '').replace(/\/+$/, '').toLowerCase();
     return Boolean(x && y) && n(x) === n(y);
@@ -437,7 +467,7 @@
   /* a product picked: its sizes looked up, and drawn when they come — unless another pick came since */
   async function startPick(product, brandName, brandId) {
     const mine = pickAsk;
-    pick = { url: product.url, name: product.name || null, brand: brandName || null, sizes: null, status: 'loading' };
+    pick = { url: product.url, name: product.name || null, brand: brandName || null, brandId: brandId || null, code: product.code || null, sizes: null, status: 'loading' };
     drawPick();
     let list = null;
     try { list = await sizesFor(product, brandId); } catch (err) { list = null; }
@@ -491,20 +521,30 @@
         }
         list.append(b);
       });
+      /* the arrow keys, Home and End move between the sizes that can be picked */
+      list.addEventListener('keydown', (e) => {
+        const pills = [...list.querySelectorAll('.ffr-size-pill:not([disabled])')];
+        const at = pills.indexOf(doc.activeElement);
+        if (at < 0) return;
+        const to = { ArrowRight: at + 1, ArrowDown: at + 1, ArrowLeft: at - 1, ArrowUp: at - 1, Home: 0, End: pills.length - 1 }[e.key];
+        if (to === undefined) return;
+        e.preventDefault();
+        pills[(to + pills.length) % pills.length].focus();
+      });
       nodes.push(list);
       if (unkeepable) nodes.push(el('p', 'ffr-hint', 'Sizes shown greyed out can’t be compared yet — enter that garment’s measurements manually instead.'));
     }
     wrap.replaceChildren(...nodes);
   }
   /* a size picked: the garment is kept at once, by the form's own checks */
-  function chooseSize(form, button) {
+  function chooseSize(form, button, quiet) {
     const size = doc.getElementById('ffr-size');
     if (!size) return;
     size.value = form;
     const wrap = doc.getElementById('ffr-pick');
     if (wrap) wrap.querySelectorAll('.ffr-size-pill').forEach((b) => { if (!b.disabled) b.setAttribute('aria-pressed', String(b === button)); });
-    if (global.FyndMetrics) global.FyndMetrics.manualInput('ffr-size');
-    apply();
+    if (!quiet && global.FyndMetrics) global.FyndMetrics.manualInput('ffr-size');
+    apply(quiet === true);
   }
   /* the hand-entry fields shown; `measure` opens the measurements too */
   function revealManual(measure) {
@@ -522,6 +562,7 @@
   /* ---------- Find your garment ---------- */
 
   let pickAsk = 0;
+  let pickDone = Promise.resolve();
   function finder() {
     const wrap = el('div', 'ffr-find');
     /* the card's own heading says what this is: the label is for screen readers */
@@ -713,7 +754,7 @@
     held.hidden = false;
     const mine = ++pickAsk;
     /* its sizes, from Fynd's data, looked up beside the check */
-    startPick(f.product, f.brand.name, f.brand.id);
+    pickDone = startPick(f.product, f.brand.name, f.brand.id);
     const sizing = global.Account && global.Account.sizing;
     const target = f.brand.id && f.product.code ? { brand: f.brand.id, code: f.product.code } : { url: f.product.url };
     const got = already || (sizing && sizing.check ? await sizing.check(target, null) : null);
@@ -820,7 +861,9 @@
     }
   }
 
-  function apply() {
+  function apply(quietly) {
+    /* a click handler is handed its event: only a literal true is quiet */
+    const quiet = quietly === true;
     const said = read();
     const missing = [];
     const a2 = said.garment.anchor;
@@ -858,16 +901,67 @@
     visitHow = pickedHow || 'manual';
     needsMeasures = false;
     const kept = said.garment.anchor.product;
-    keepPick(pick && pick.status !== 'loading' && kept && kept.url && sameUrl(kept.url, pick.url)
-      ? { url: pick.url, name: pick.name, brand: pick.brand, sizes: pick.sizes } : null);
+    const picked = pick && pick.status !== 'loading' && kept && kept.url && sameUrl(kept.url, pick.url) ? pick : null;
+    /* what Fynd said it holds for it, shown on its card */
+    const heldBox = doc.getElementById('ffr-held');
+    const heldNow = picked && heldBox && !heldBox.hidden && heldBox.dataset.status && heldBox.dataset.status !== 'checking'
+      ? { status: heldBox.dataset.status, text: (heldBox.firstChild && heldBox.firstChild.textContent) || '' } : null;
+    keepPick(picked ? { url: picked.url, name: picked.name, brand: picked.brand, sizes: picked.sizes, held: heldNow } : null);
+    /* remembered on this device: a garment found and its size picked, with no
+       measurements of the shopper's (those are never stored here) — any
+       other garment kept replaces what was remembered */
+    if (picked && !said.garment.anchor.measurements && said.garment.anchor.size) {
+      writeSaved({ url: picked.url, brandId: picked.brandId || null, code: picked.code || null, name: picked.name || null, brand: picked.brand || said.garment.anchor.brand || null, type: said.type, line: said.garment.line || null, size: said.garment.anchor.size });
+    } else clearSaved();
     pick = null;
     keep(checked(said), 'shopper');
     editing = false;
     prefill = null;
     redraw();
-    /* on to the item, when it hasn't been given yet */
+    /* on to the item, when it hasn't been given yet — never when restoring by itself */
     const next = doc.getElementById('ffi-link');
-    if (next && !next.value && !(global.FindFitItem && global.FindFitItem.state() !== 'none')) next.focus();
+    if (!quiet && next && !next.value && !(global.FindFitItem && global.FindFitItem.state() !== 'none')) next.focus();
+  }
+
+  /* ---------- restoring the remembered garment ----------
+     Looked up again as a fresh pick is, its size kept only if Fynd still
+     lists it for that product, and kept through apply's own checks. A
+     check that can't be made now leaves it unused (and remembered) with
+     the shopper told; anything that no longer holds is forgotten. */
+  let restoreTried = false;
+  async function restoreSaved() {
+    if (restoreTried) return;
+    restoreTried = true;
+    const s = readSaved();
+    if (!s) return;
+    const search = doc.getElementById('ffr-search');
+    const held = doc.getElementById('ffr-held');
+    if (!search || !held) return;
+    search.value = [s.brand, s.name].filter(Boolean).join(' · ');
+    root.dataset.restore = 'checking';
+    const product = { name: s.name, url: s.url, category: s.type, line: s.line, code: s.code || null };
+    await usePicked({ brand: { id: s.brandId || null, name: s.brand || '' }, product }, null, search, held);
+    const mine = pickAsk;
+    await pickDone;
+    /* the shopper moved on while it was looked up: theirs wins */
+    if (mine !== pickAsk || !pick || !sameUrl(pick.url, s.url) || visit) { root.dataset.restore = 'superseded'; return; }
+    const say = (text) => { held.append(el('p', 'ffr-held-size ffr-restore-note', text)); };
+    if (held.dataset.status === 'unknown') {
+      root.dataset.restore = 'unchecked';
+      say(`Your saved garment couldn’t be checked just now, so it isn’t used yet. Pick size ${s.size} to use it, or search for another.`);
+      return;
+    }
+    if (held.dataset.status === 'not-covered') { clearSaved(); root.dataset.restore = 'forgotten'; return; }
+    const button = pick.status === 'ready' ? [...doc.querySelectorAll('#ffr-pick .ffr-size-pill:not([disabled])')].find((b) => keepable(b.dataset.size) === s.size) : null;
+    if (!button) {
+      clearSaved();
+      root.dataset.restore = 'forgotten';
+      say(`Size ${s.size} isn’t listed for this garment any more. Pick the size you own.`);
+      return;
+    }
+    chooseSize(s.size, button, true);
+    root.dataset.restore = visit ? 'restored' : 'failed';
+    if (!visit) clearSaved();
   }
 
   /* ---------- drawing ---------- */
@@ -906,11 +1000,13 @@
     card.dataset.kind = value.type;
     card.append(glyph(value.type));
     const top = el('div', 'ff-ref-top');
-    top.append(el('span', 'ff-ref-kind', `${cap(g.one)} · this visit`));
     const actions = el('span', 'ff-ref-actions');
     /* found by search: the product's own name and the size picked */
     const named = visitPick && a.product && a.product.url && sameUrl(visitPick.url, a.product.url) && visitPick.name ? visitPick : null;
-    const edit = el('button', 'link-btn ff-ref-edit', 'Edit');
+    const saved = readSaved();
+    const remembered = Boolean(named && saved && sameUrl(saved.url, named.url) && saved.size === a.size && saved.type === value.type);
+    top.append(el('span', 'ff-ref-kind', remembered ? cap(g.one) : `${cap(g.one)} · this visit`));
+    const edit = el('button', 'link-btn ff-ref-edit', 'Change');
     edit.type = 'button';
     edit.setAttribute('aria-label', 'Change your garment or its size');
     edit.addEventListener('click', () => {
@@ -929,22 +1025,32 @@
     });
     const remove = el('button', 'link-btn ff-ref-remove', 'Remove');
     remove.type = 'button';
-    remove.addEventListener('click', () => { keep(null, 'shopper'); keepPick(null); pick = null; redraw(); const f = doc.getElementById('ffr-search') || doc.getElementById('ffr-brand'); if (f) f.focus(); });
+    remove.setAttribute('aria-label', 'Remove your garment');
+    remove.addEventListener('click', () => { keep(null, 'shopper'); keepPick(null); clearSaved(); pick = null; redraw(); const f = doc.getElementById('ffr-search') || doc.getElementById('ffr-brand'); if (f) f.focus(); });
     actions.append(edit, remove);
     top.append(actions);
     card.append(top);
     if (named) {
+      /* one line: ✓ the product's name — Size L */
       const tick = el('span', 'ff-ref-tick', '✓');
       tick.setAttribute('aria-hidden', 'true');
       const name = el('p', 'ff-ref-name', [named.brand || a.brand, named.name].filter(Boolean).join(' · '));
       name.prepend(tick);
-      card.append(name, el('p', 'ff-ref-size', [a.size ? `Size ${a.size}` : null, value.garment.line ? LINE_WORDS[value.garment.line] : null].filter(Boolean).join(' · ')));
+      name.append(el('span', 'ff-ref-size', ` — ${[a.size ? `Size ${a.size}` : null, value.garment.line ? LINE_WORDS[value.garment.line] : null].filter(Boolean).join(' · ')}`));
+      card.append(name);
+      /* what Fynd holds for it, in the server's words from its check — warnings kept */
+      if (named.held && named.held.text) {
+        const heldLine = el('p', 'ff-ref-detail ff-ref-held', named.held.text);
+        heldLine.dataset.status = named.held.status;
+        card.append(heldLine);
+      } else card.append(el('p', 'ff-ref-detail', missingDimensions(true)));
     } else {
       card.append(el('p', 'ff-ref-name', [a.brand, a.size ? `size ${a.size}` : null, value.garment.line ? LINE_WORDS[value.garment.line] : null].filter(Boolean).join(' · ')));
       if (said.product) card.append(el('p', 'ff-ref-detail', said.product));
+      card.append(el('p', 'ff-ref-detail', said.measurements ? `Measured: ${said.measurements}` : missingDimensions(Boolean(said.product))));
     }
-    card.append(el('p', 'ff-ref-detail', said.measurements ? `Measured: ${said.measurements}` : missingDimensions(Boolean(said.product))));
-    card.append(el('p', 'ff-ref-status', 'Kept for this visit. Not saved to an account.'));
+    card.dataset.remembered = String(remembered);
+    card.append(el('p', 'ff-ref-status', remembered ? 'Remembered on this device. Not saved to an account.' : 'Kept for this visit. Not saved to an account.'));
     return card;
   }
 
@@ -1150,7 +1256,7 @@
     }
     /* the header's account link, where a shopper looks for it: "Sign in" while signed out */
     doc.querySelectorAll('.nav-links a[href="account.html"], .footer-links a[href="account.html"]').forEach((n) => { n.textContent = signedIn ? 'Account' : 'Sign in'; });
-    if (!signedIn) { unsavedState(); changed(); return; }
+    if (!signedIn) { unsavedState(); changed(); if (!visit) restoreSaved(); return; }
     const got = await account.fitProfile.read();
     if (ask !== asked) return;
     if (!got.ok) { unavailable(); return; }
@@ -1159,6 +1265,8 @@
     savedInUse = savedKinds(lastProfile).length > 0;
     redraw();
     changed();
+    /* the fit profile's own garments come first: the device's memory only when there are none */
+    if (!savedInUse && !visit) restoreSaved();
   }
 
   /* the item's kind known or changed: the matching saved garment is chosen, unless the shopper chose */
@@ -1187,7 +1295,9 @@
     refresh,
     unsaved: () => (savedInUse ? null : visit),
     current: () => visit,
-    forget: () => { keep(null); keepPick(null); redraw(); },
+    forget: () => { keep(null); keepPick(null); clearSaved(); redraw(); },
+    /* the garment remembered on this device, as stored (for tests and the page) */
+    remembered: () => readSaved(),
     savedProfile: () => lastProfile,
     unlock: () => {},
     locked: () => false,

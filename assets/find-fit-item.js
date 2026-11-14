@@ -105,7 +105,7 @@
     if (!garment) return Object.assign(base, { state: charts.some((x) => x.measures === 'not-stated') ? 'incomplete' : 'body-only', why: charts.some((x) => x.measures === 'not-stated') ? ['The page’s chart doesn’t say whether it measures the garment or the body.'] : [] });
     /* the record path: checked measurements for this exact product */
     if (c.from === 'fynd-record' && c.comparable && c.productId) {
-      return Object.assign(base, { state: 'automatic', source: { mode: 'record', productId: c.productId }, unit: garment.unit, summary: summarise(garment) });
+      return Object.assign(base, { state: 'automatic', source: { mode: 'record', productId: c.productId }, unit: garment.unit, summary: summarise(garment), retrievedAt: garment.retrievedAt || null });
     }
     /* a chart to compare as the shopper's confirmed numbers: every column read, or none */
     const unit = garment.unit === 'cm' || garment.unit === 'in' ? garment.unit : null;
@@ -263,8 +263,11 @@
       d.id = 'ffi-details';
       if (state === 'assisted' && item.detailsOpen) d.open = true;
       d.addEventListener('toggle', () => { item.detailsOpen = d.open; });
+      /* folded: the confirmation stays compact; the figures are one click away */
       const words = item.summary.columns.map((x) => (Candidate.LABELS[x.dim] || x.header).toLowerCase()).join(', ');
-      d.append(el('summary', null, `The measurements: ${words}, in ${item.summary.unit === 'in' ? 'inches' : 'centimetres'}`), valuesTable(item.summary));
+      const sum = el('summary', null, 'View measurements');
+      sum.setAttribute('aria-label', `View measurements: ${words}, in ${item.summary.unit === 'in' ? 'inches' : 'centimetres'}`);
+      d.append(sum, valuesTable(item.summary));
       card.push(d);
     }
     if ((state === 'automatic' || state === 'assisted') && (!item.type || item.typeFrom === 'shopper' || item.typeOpen)) card.push(typeChooser());
@@ -359,6 +362,42 @@
     if (e.key === 'Escape' && linkOpen && found() && linkInput.value.trim() === askedUrl) { linkOpen = false; draw(); const b = $('ffi-edit'); if (b) b.focus(); }
   });
 
+  /* ---------- a product link pasted anywhere on the page ----------
+     A paste outside every editable field that is one http(s) address is
+     the item's link: put in the link box and looked up through the same
+     path as typing it (the input event, then lookUp) — so the same link is
+     never looked up twice. A paste into any input, textarea, select or
+     contenteditable is left alone: the garment search keeps its own text,
+     and the link box handles its own paste. Removed when the page goes
+     away, or when this script is set up again. */
+  if (global.FindFitItem && typeof global.FindFitItem.destroy === 'function') global.FindFitItem.destroy();
+  const pageWatch = typeof global.AbortController === 'function' ? new global.AbortController() : null;
+  const listen = (target, type, fn) => target.addEventListener(type, fn, pageWatch ? { signal: pageWatch.signal } : false);
+  const EDITABLE = 'input, textarea, select, [contenteditable]:not([contenteditable="false"])';
+  const ONE_URL = /^https?:\/\/[^\s]+\.[^\s]+$/i;
+  const inEditable = (n) => Boolean(n && n.closest && n.closest(EDITABLE));
+  function takeLink(url) {
+    /* already the item shown, or being looked up: nothing to do */
+    if (url === askedUrl && (state === 'loading' || found())) return;
+    /* a link given: the item's hand entry, if open, gives way to it */
+    if (manual && manual.open) manual.open = false;
+    linkInput.value = url;
+    linkInput.dispatchEvent(new global.Event('input', { bubbles: true }));
+    lookUp(false);
+  }
+  listen(doc, 'paste', (e) => {
+    if (inEditable(e.target) || inEditable(doc.activeElement)) return;
+    const text = e.clipboardData ? String(e.clipboardData.getData('text/plain') || '').trim() : '';
+    if (!ONE_URL.test(text)) return;
+    e.preventDefault();
+    takeLink(text);
+  });
+  listen(global, 'pagehide', (e) => { if (!e.persisted && pageWatch) pageWatch.abort(); });
+
+  /* on a desktop, the link box is ready for typing or pasting the moment the page opens */
+  const desktop = () => Boolean(global.matchMedia && global.matchMedia('(min-width: 900px) and (hover: hover) and (pointer: fine)').matches);
+  if (desktop() && !(linkBox && linkBox.hidden) && (!doc.activeElement || doc.activeElement === doc.body)) linkInput.focus({ preventScroll: true });
+
   /* the unit strip: only while something is typed by hand (here, or the garment's measurements) */
   const strip = $('ff-units-strip');
   /* it sits inside the hand-entry form being filled in — the one opened last —
@@ -410,7 +449,12 @@
       if (item.source.mode === 'record' && item.source.productId) return `record:${item.source.productId}`;
       return item.product && item.product.canonical ? `url:${item.product.canonical}` : null;
     },
+    /* which data the item was read from: a newer read of the same product is another comparison */
+    version: () => (item && item.source ? [item.source.mode, item.origin || 'record', item.retrievedAt || null, item.checked ? 'confirmed' : 'as-found'].join('|') : null),
     lookUp,
+    takeLink,
+    /* the page-wide paste listener and its page-hide listener, removed */
+    destroy: () => { if (pageWatch) pageWatch.abort(); },
     syncStrip
   };
 })(typeof window !== 'undefined' ? window : globalThis);
