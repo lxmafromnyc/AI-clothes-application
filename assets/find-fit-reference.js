@@ -631,7 +631,8 @@
     wrap.id = 'ffr-pick';
     wrap.hidden = true;
     wrap.setAttribute('aria-live', 'polite');
-    global.setTimeout(drawPick, 0);
+    /* filled by unsavedState once the form is on the page (drawPick), in the
+       same step that draws it — never left empty for a moment after a redraw */
     return wrap;
   }
   function drawPick() {
@@ -1547,6 +1548,8 @@
     root.replaceChildren(...nodes);
     root.dataset.state = signedIn ? 'none' : 'signed-out';
     root.dataset.visit = visit ? 'set' : 'empty';
+    /* the garment found and its sizes, drawn with the form (and the anchors with them) */
+    drawPick();
     drawAnchors();
   }
 

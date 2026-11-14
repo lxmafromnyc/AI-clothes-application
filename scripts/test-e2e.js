@@ -3406,6 +3406,43 @@ const linkFromInbox = (pattern) => {
     await context.close();
   }));
 
+  await test('a redraw never empties the sizes: the account answering after a wardrobe anchor is picked leaves its size pills on the page at every moment', () => asChecked(UQ_PAIR, async () => {
+    const context = await openContext({ byHand: false });
+    const page = await context.newPage();
+    /* the account read held back until the anchor is picked, as on a slow runner */
+    let release;
+    const held = new Promise((r) => { release = r; });
+    await page.route(/\/api\/account(\?|$)/, async (route) => { await held; return route.continue(); });
+    await open(page, 'index.html');
+    await page.waitForSelector('#ff-anchors:not([hidden]) .ff-anchor');
+    assert.strictEqual(await page.$('#ff-reference .ffr-form'), null, 'the anchors are offered before the account has answered');
+    /* every change to the section: a moment with a garment picked and no sizes is a gap */
+    await page.evaluate(() => {
+      window.__gaps = [];
+      window.__forms = 0;
+      const ref = document.getElementById('ff-reference');
+      new MutationObserver((records) => {
+        records.forEach((r) => r.addedNodes.forEach((n) => { if (n.nodeType === 1 && (n.matches('.ffr-form') || n.querySelector('.ffr-form'))) window.__forms += 1; }));
+        if (!window.__picked) return;
+        const pills = document.querySelectorAll('#ffr-pick .ffr-size-pill').length;
+        if (!pills) window.__gaps.push({ form: Boolean(ref.querySelector('.ffr-form')), pickShown: Boolean(document.getElementById('ffr-pick') && !document.getElementById('ffr-pick').hidden) });
+      }).observe(ref, { childList: true, subtree: true, attributes: true });
+      window.__picked = true;
+    });
+    await page.click('#ff-anchors .ff-anchor[data-id="uniqlo-e475377-sweatshirt-us"]');
+    const sizes = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL'];
+    assert.deepStrictEqual(await page.$$eval('#ffr-pick .ffr-size-pill', (bs) => bs.map((b) => b.dataset.size)), sizes, 'the sizes, at once');
+    /* the account answers now: the section is drawn again */
+    const answered = page.waitForResponse(/\/api\/account(\?|$)/);
+    release();
+    await answered;
+    await page.waitForFunction(() => window.__forms >= 2, null, { timeout: 4000 });
+    assert.deepStrictEqual(await page.$$eval('#ffr-pick .ffr-size-pill', (bs) => bs.map((b) => b.dataset.size)), sizes, 'still there after the redraw');
+    assert.deepStrictEqual(await page.evaluate(() => window.__gaps), [], 'never a moment with the garment picked and no sizes');
+    assert.strictEqual(await page.inputValue('#ffr-product'), 'https://www.uniqlo.com/us/en/products/E475377-000/00', 'the pick itself kept');
+    await context.close();
+  }));
+
   await test('Popular Wardrobe Anchors: only products whose checked records publish the finished garment\'s measurements — none from production\'s unchecked records, the UNIQLO pair when checked — and picking one fills the garment, with the size on its label still the shopper\'s to choose', async () => {
     const context = await openContext();
     const page = await context.newPage();
