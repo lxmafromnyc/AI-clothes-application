@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test)",
+      "Bash(npm test *)",
+      "Bash(node scripts/ci-tests.js)",
+      "Bash(node scripts/ci-tests.js *)",
+      "Bash(node scripts/test-*)",
+      "Bash(git status)",
+      "Bash(git status *)",
+      "Bash(git diff)",
+      "Bash(git diff *)",
+      "PowerShell(npm test)",
+      "PowerShell(npm test *)",
+      "PowerShell(node scripts/ci-tests.js)",
+      "PowerShell(node scripts/ci-tests.js *)",
+      "PowerShell(node scripts/test-*)",
+      "PowerShell(git status)",
+      "PowerShell(git status *)",
+      "PowerShell(git diff)",
+      "PowerShell(git diff *)",
+      "Read",
+      "Grep",
+      "Glob"
+    ],
+    "deny": [
+      "Read(./.env*)",
+      "Edit(./.env*)"
+    ]
+  }
+}
