@@ -106,18 +106,21 @@ async function signUp(email) {
 /* ---------- invented data (none is a real product's) ---------- */
 const FORM = { chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' };
 const MINE = { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 };
-const SENT_REFERENCE = { type: 'hoodies', garment: { favorite: 'perfect', anchor: { brand: null, size: null, measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' } } } };
+/* the shopper's garment, its sleeves said to be set-in (Find Fit's question), and measured the two other ways too
+   ("measure more"): its sleeve from the centre back and its shoulders across their broadest part */
+const ALTERNATES = [{ dimension: 'sleeveLength', value: 84 }, { dimension: 'shoulderWidth', value: 50 }];
+const SENT_REFERENCE = { type: 'hoodies', garment: { favorite: 'perfect', anchor: { brand: null, size: null, construction: 'set-in', measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' }, alternates: ALTERNATES } } };
 function savedProfile() {
   const p = Schema.empty();
-  p.garments = { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'Owned Brand', size: 'L', measurements: Object.assign({}, MINE), methods: Object.assign({ registry: 1 }, FORM) } }) };
+  p.garments = { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'Owned Brand', size: 'L', construction: 'set-in', measurements: Object.assign({}, MINE), methods: Object.assign({ registry: 1 }, FORM), alternates: [{ dimension: 'sleeveLength', method: 'center-back-to-cuff', value: 84 }, { dimension: 'shoulderWidth', method: 'broadest-part-of-shoulders', value: 50 }] } }) };
   return p;
 }
 /* the variants-hoodie fixture's chart, as charts() lists it */
 const HOODIE_CHART = {
   index: 0, measures: 'finished-garment', unit: 'cm', title: 'Product size (cm)', tab: null, inDialog: false, visible: true,
-  columns: ['Chest (½)', 'Shoulder (seam to seam)', 'Length (HPS)', 'Sleeve (from shoulder seam)'],
+  columns: ['Chest (½)', 'Shoulder (seam to seam)', 'Length (HPS)', 'Sleeve (centre back)'],
   methodsSaid: null,
-  rows: [['S', '53', '45', '64', '59'], ['M', '55.5', '47.5', '66', '60.5'], ['L', '58', '50', '68', '62'], ['XL', '60.5', '52.5', '70', '63.5']].map(([size, ...values]) => ({ size, values }))
+  rows: [['S', '53', '45', '64', '81'], ['M', '55.5', '47.5', '66', '82.5'], ['L', '58', '50', '68', '84'], ['XL', '60.5', '52.5', '70', '85.5']].map(([size, ...values]) => ({ size, values }))
 };
 const HOODIE_RAW = {
   url: 'https://shop.example.test/products/heavyweight-hoodie?utm_source=x#reviews',
@@ -215,16 +218,16 @@ const chartFor = (review) => X.buildChart(review, product(), 'hoodies');
   await test('a garment chart whose headings state every method: nothing left to ask, and the chart sent says where each value came from', () => {
     const review = X.startReview(HOODIE_CHART, product());
     assert.deepStrictEqual([review.source, review.measures, review.measuresConfirmed, review.unit], ['page-table', 'finished-garment', true, 'cm']);
-    assert.deepStrictEqual(review.columns.map((c) => [c.dim, c.method]), [['chestWidth', FORM.chestWidth], ['shoulderWidth', FORM.shoulderWidth], ['bodyLength', FORM.bodyLength], ['sleeveLength', FORM.sleeveLength]]);
+    assert.deepStrictEqual(review.columns.map((c) => [c.dim, c.method]), [['chestWidth', FORM.chestWidth], ['shoulderWidth', FORM.shoulderWidth], ['bodyLength', FORM.bodyLength], ['sleeveLength', 'center-back-to-cuff']]);
     assert.deepStrictEqual(review.rows.map((r) => r.available), [true, true, true, false]);
     assert.deepStrictEqual(X.reviewProblems(review, 'hoodies'), []);
     const chart = chartFor(review);
-    assert.deepStrictEqual(chart.methods, Object.assign({ registry: 1 }, { chestWidth: FORM.chestWidth, shoulderWidth: FORM.shoulderWidth, bodyLength: FORM.bodyLength, sleeveLength: FORM.sleeveLength }));
+    assert.deepStrictEqual(chart.methods, Object.assign({ registry: 1 }, { chestWidth: FORM.chestWidth, shoulderWidth: FORM.shoulderWidth, bodyLength: FORM.bodyLength, sleeveLength: 'center-back-to-cuff' }));
     assert.strictEqual(chart.measures, 'finished-garment');
     assert.strictEqual(chart.sizes.length, 4);
-    assert.deepStrictEqual(chart.sizes[2], { size: 'L', measurements: { chestWidth: 58, shoulderWidth: 50, bodyLength: 68, sleeveLength: 62 }, provenance: {
+    assert.deepStrictEqual(chart.sizes[2], { size: 'L', measurements: { chestWidth: 58, shoulderWidth: 50, bodyLength: 68, sleeveLength: 84 }, provenance: {
       chestWidth: { source: 'page-table', header: 'Chest (½)', corrected: false }, shoulderWidth: { source: 'page-table', header: 'Shoulder (seam to seam)', corrected: false },
-      bodyLength: { source: 'page-table', header: 'Length (HPS)', corrected: false }, sleeveLength: { source: 'page-table', header: 'Sleeve (from shoulder seam)', corrected: false } } });
+      bodyLength: { source: 'page-table', header: 'Length (HPS)', corrected: false }, sleeveLength: { source: 'page-table', header: 'Sleeve (centre back)', corrected: false } } });
     assert.ok(!JSON.stringify(chart).includes('verified'), 'nothing in the chart claims to be checked');
   });
 
@@ -308,7 +311,28 @@ const chartFor = (review) => X.buildChart(review, product(), 'hoodies');
 
   out('\nthe server: every size in one request (api/size-recommendation.js)\n');
 
-  const fullChart = () => chartFor(X.startReview(HOODIE_CHART, product()));
+  /* the extension's chart is a catalogue candidate: how its sleeves are attached can come only from evidence about the
+     product, never from the shopper, and the page gives none. So its seam-to-seam shoulders are never compared (below);
+     the batch tests read them as measured across their broadest part, beside the garment's own alternates measured
+     that way and with the sleeve from the centre back as the page says — nothing there depends on construction */
+  const plainChart = () => chartFor(X.startReview(HOODIE_CHART, product()));
+  const fullChart = () => { const c = plainChart(); c.methods = Object.assign({}, c.methods, { shoulderWidth: 'broadest-part-of-shoulders' }); return c; };
+
+  await test('a catalogue candidate never takes the shopper’s construction: a chart sent with "set-in" beside a garment said to be set-in still has its seam measurements left out — chest and length still compared', async () => {
+    for (const chart of [plainChart(), Object.assign(plainChart(), { construction: 'set-in' })]) {
+      const got = await compare({ chart, reference: SENT_REFERENCE });
+      assert.strictEqual(got.status, 200, JSON.stringify(got.body));
+      assert.strictEqual(got.body.chart.construction, undefined, 'never read, never echoed, never filled in');
+      const c = got.body.comparison;
+      /* the sleeve from the centre back is compared (with the garment's alternate measured that way); the shoulders,
+         seam to seam, are not — the product says nothing of how its sleeves are attached */
+      assert.deepStrictEqual((c.dimensionsCompared || c.dimensionsShared).slice().sort(), ['bodyLength', 'chestWidth', 'sleeveLength']);
+      assert.match(c.notCompared.find((x) => x.dim === 'shoulderWidth').why, /isn’t known for Illustrative Outfitters's — Fynd doesn’t assume it/);
+      assert.ok(!got.body.decision.dimensions.some((x) => x.dim === 'shoulderWidth' && x.status === 'compatible'), 'the shoulders are never compared');
+    }
+    /* the extension's own request carries no construction at all */
+    assert.ok(!('construction' in plainChart()));
+  });
 
   await test('one request, every size: Fynd’s engine compares them all and its decision picks one — the same as comparing each size alone', async () => {
     const got = await compare({ chart: fullChart(), reference: SENT_REFERENCE });

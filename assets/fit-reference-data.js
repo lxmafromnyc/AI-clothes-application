@@ -1362,7 +1362,7 @@
         "title": "Men's body measurement chart (inches), on the product page",
         "source": "https://www.carhartt.com/product/K121/loose-fit-midweight-sweatshirt",
         "retrievedAt": "2026-10-10",
-        "verification": "verified",
+        "verification": "unverified",
         "records": [
           "carhartt-k121-loose-fit-midweight-hoodie-us",
           "carhartt-k124-loose-fit-midweight-crewneck-us"
@@ -1453,7 +1453,7 @@
         "title": "Gender Neutral (Men's Based) Size Chart",
         "source": "https://www.nike.com/size-fit/gender-neutral-clothing-mens-based-alpha",
         "retrievedAt": "2026-10-10",
-        "verification": "verified",
+        "verification": "unverified",
         "records": [
           "nike-fn3859-club-pullover-fleece-hoodie-us",
           "nike-fn3886-club-fleece-crew-us"

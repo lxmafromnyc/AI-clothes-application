@@ -185,7 +185,9 @@
     const measurements = {};
     const methods = { registry: Candidate.REGISTRY };
     DIMS.forEach((d) => { measurements[d] = v(`ffc-m-${d}`); methods[d] = v(`ffc-how-${d}`) || null; });
-    return { type: typeNow(), brand: v('ffc-brand'), name: v('ffc-name'), size: v('ffc-size'), unit: unitNow(), measurements, methods };
+    /* how its sleeves are attached, only when the shopper says (assets/fit-candidate.js) */
+    const construction = $('ffc-construction') ? v('ffc-construction') : '';
+    return Object.assign({ type: typeNow(), brand: v('ffc-brand'), name: v('ffc-name'), size: v('ffc-size'), unit: unitNow(), measurements, methods }, construction ? { construction } : {});
   }
   /* the reader speaks for every kind it knows; this form offers two */
   const SAID = { type: 'Choose whether it’s a hoodie or a sweatshirt.' };
@@ -193,7 +195,7 @@
   const FIELD = (field) => {
     if (field.startsWith('measurements.')) return `ffc-m-${field.slice(13)}`;
     if (field.startsWith('methods.')) return `ffc-how-${field.slice(8)}`;
-    return { type: 'ff-type', brand: 'ffc-brand', name: 'ffc-name', size: 'ffc-size', unit: 'ff-unit', measurements: 'ffc-measurements' }[field] || 'ffc-measurements';
+    return { type: 'ff-type', brand: 'ffc-brand', name: 'ffc-name', size: 'ffc-size', unit: 'ff-unit', measurements: 'ffc-measurements', construction: 'ffc-construction' }[field] || 'ffc-measurements';
   };
   function clearErrors() {
     form.querySelectorAll('#ff-step-target .ffr-error, .ff-setup .ffr-error, #ff-garment-error').forEach((n) => { n.textContent = ''; n.classList.remove('show'); });

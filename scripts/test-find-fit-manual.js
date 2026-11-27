@@ -54,16 +54,18 @@ async function test(name, fn) {
 /* the form's own method for each dimension — how the reference is measured */
 const FORM = { chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' };
 const MINE = { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 };
-/* a garment the shopper owns, measured at home, in the fit profile's own shape */
+/* a garment the shopper owns, measured at home, in the fit profile's own shape — its sleeves said to be
+   set-in (unsaid, its seam measurements are never compared: see the construction tests below) */
 const referenceProfile = (m) => {
   const p = Schema.empty();
   const measurements = Object.assign({}, m || MINE);
-  p.garments = { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: null, size: null, measurements, methods: Object.assign({ registry: 1 }, Object.fromEntries(Object.keys(FORM).filter((k) => measurements[k] != null).map((k) => [k, FORM[k]]))) } }) };
+  p.garments = { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: null, size: null, construction: 'set-in', measurements, methods: Object.assign({ registry: 1 }, Object.fromEntries(Object.keys(FORM).filter((k) => measurements[k] != null).map((k) => [k, FORM[k]]))) } }) };
   return p;
 };
 /* the same garment as the page sends it for this visit */
-const SENT = { type: 'hoodies', garment: { favorite: 'perfect', anchor: { brand: null, size: null, measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' } } } };
-const item = (m, how, extra) => Object.assign({ type: 'hoodies', brand: 'AnyBrand', name: 'Heavy Hood', size: 'L', unit: 'cm', measurements: m, methods: Object.assign({ registry: 1 }, how || FORM) }, extra || {});
+const SENT = { type: 'hoodies', garment: { favorite: 'perfect', anchor: { brand: null, size: null, construction: 'set-in', measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' } } } };
+/* the item, its sleeves said to be set-in like the reference's (extra can say otherwise, or nothing) */
+const item = (m, how, extra) => Object.assign({ type: 'hoodies', brand: 'AnyBrand', name: 'Heavy Hood', size: 'L', unit: 'cm', measurements: m, methods: Object.assign({ registry: 1 }, how || FORM), construction: 'set-in' }, extra || {});
 const SAME = { chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 };
 const decide = (profile, raw) => {
   const read = Candidate.readCandidate(raw);
@@ -89,7 +91,7 @@ const post = (body, opts) => new Promise((resolve) => {
   await test('a whole item reads as given: type, labels cleaned, every value to a hundredth in its own unit, each with its method', () => {
     const r = Candidate.readCandidate(item({ chestWidth: '58.256', bodyLength: '68', shoulderWidth: 50, sleeveLength: ' 62 ' }, null, { brand: '  Any   Brand ', name: 'Heavy\u0000Hood' }));
     assert.deepStrictEqual(r.errors, []);
-    assert.deepStrictEqual(r.candidate, { type: 'hoodies', brand: 'Any Brand', name: 'Heavy Hood', size: 'L', unit: 'cm', measurements: { chestWidth: 58.26, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 }, methods: Object.assign({ registry: 1 }, FORM) });
+    assert.deepStrictEqual(r.candidate, { type: 'hoodies', brand: 'Any Brand', name: 'Heavy Hood', size: 'L', unit: 'cm', measurements: { chestWidth: 58.26, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 }, methods: Object.assign({ registry: 1 }, FORM), construction: 'set-in' });
   });
 
   await test('partial measurements: only the values given — a blank stays missing, never filled in, and its method isn’t asked for', () => {
@@ -239,7 +241,7 @@ const post = (body, opts) => new Promise((resolve) => {
     assert.deepStrictEqual(Object.fromEntries(Object.entries(byHand.dimensions).map(([k, x]) => [k, [x.difference, x.withinTolerance, x.tolerance]])),
       Object.fromEntries(Object.entries(fromRecord.dimensions).map(([k, x]) => [k, [x.difference, x.withinTolerance, x.tolerance]])));
     assert.strictEqual(byHand.score, fromRecord.score, 'the same score, by the same weights and tolerances');
-  }));
+  }, { construction: 'set-in' }));
 
   await test('Fynd’s own records are unchanged: an unverified one is still refused, a hand-entered shape never passes as a record, and nothing a page sends makes an item verified', () => {
     const record = sizing.byId('uniqlo-e475378-sweat-pullover-hoodie-us');
@@ -249,7 +251,7 @@ const post = (body, opts) => new Promise((resolve) => {
     assert.strictEqual(decision.decide(referenceProfile(), forged, { via: 'compare' }).reasons[0].code, 'no-record');
     /* extra fields sent with an item are dropped by the reader */
     const r = Candidate.readCandidate(Object.assign(item(SAME), { verification: { status: 'verified' }, id: 'uniqlo-e475378-sweat-pullover-hoodie-us' }));
-    assert.deepStrictEqual(Object.keys(r.candidate).sort(), ['brand', 'measurements', 'methods', 'name', 'size', 'type', 'unit']);
+    assert.deepStrictEqual(Object.keys(r.candidate).sort(), ['brand', 'construction', 'measurements', 'methods', 'name', 'size', 'type', 'unit']);
     assert.strictEqual(engine.candidateRecord(r.candidate).verification.status, 'shopper-entered');
   });
 
@@ -296,7 +298,7 @@ const post = (body, opts) => new Promise((resolve) => {
       { query: { product: 'uniqlo-e475378-sweat-pullover-hoodie-us' } });
     assert.strictEqual(got.status, 200);
     const { comparison, decision: d, candidate } = got.body;
-    assert.deepStrictEqual(Object.keys(candidate).sort(), ['brand', 'measurements', 'methods', 'name', 'size', 'type', 'unit'], 'only the item’s own fields read');
+    assert.deepStrictEqual(Object.keys(candidate).sort(), ['brand', 'construction', 'measurements', 'methods', 'name', 'size', 'type', 'unit'], 'only the item’s own fields read');
     assert.strictEqual(candidate.methods.registry, 1, 'the registry version is the server’s, never the client’s');
     assert.deepStrictEqual([comparison.dataStatus, comparison.productId, comparison.reliability], ['shopper-entered', 'your-candidate', 'medium'], 'the hand-entered item, never the record named in the body or the address');
     assert.ok(d.dimensions.every((x) => x.target.status === 'shopper-entered'), 'every measurement the shopper’s, never "verified"');
@@ -334,12 +336,18 @@ const post = (body, opts) => new Promise((resolve) => {
 
   await test('W2 through the route: a whole chart whose top-ranked size is outside a band answers with the next acceptable one — the comparison sent describes that size, the ranking unchanged', async () => {
     /* in cm: M chest exact but 4.1 cm (1.6 in) short in the body; S 3.3 cm (1.3 in) narrower flat, inside every band */
-    const chart = { type: 'hoodies', brand: 'AnyBrand', name: 'Heavy Hood', unit: 'cm', measures: 'finished-garment', methods: Object.assign({ registry: 1 }, FORM), sizes: [
+    /* a chart read from a page is a catalogue candidate: no shopper answer says how its sleeves are attached, so it measures
+       the sleeve from the centre back and the shoulders across their broadest part, and the garment carries those two
+       alternates ("measure more") — nothing here depends on construction */
+    const CB_WAY = Object.assign({ registry: 1 }, FORM, { sleeveLength: 'center-back-to-cuff', shoulderWidth: 'broadest-part-of-shoulders' });
+    const withAlternates = JSON.parse(JSON.stringify(SENT));
+    withAlternates.garment.anchor.alternates = [{ dimension: 'sleeveLength', value: '62' }, { dimension: 'shoulderWidth', value: '50' }];
+    const chart = { type: 'hoodies', brand: 'AnyBrand', name: 'Heavy Hood', unit: 'cm', measures: 'finished-garment', methods: CB_WAY, sizes: [
       { size: 'S', measurements: Object.assign({}, SAME, { chestWidth: 54.7 }) },
       { size: 'M', measurements: Object.assign({}, SAME, { bodyLength: 63.9 }) },
       { size: 'L', measurements: { chestWidth: 63, bodyLength: 71, shoulderWidth: 53, sleeveLength: 64 } }
     ] };
-    const got = await post({ chart, reference: SENT });
+    const got = await post({ chart, reference: withAlternates });
     assert.strictEqual(got.status, 200);
     const { comparison: c, decision: d } = got.body;
     assert.deepStrictEqual([d.outcome, d.size, c.status, c.recommended, c.closest], ['OK', 'S', 'ok', 'S', 'M']);

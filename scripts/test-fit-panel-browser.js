@@ -191,15 +191,20 @@ async function launch(dir) {
 
 /* ---------- the shopper's saved garments (invented) ---------- */
 const FORM = { chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' };
-function profileWith(garments) {
+function profileWith(garments, opts) {
   const p = Schema.empty();
   p.garments = {};
   Object.entries(garments).forEach(([type, measurements]) => {
-    p.garments[type] = Object.assign(Schema.emptyGarment(type), { favorite: 'perfect', anchor: { brand: 'Owned Brand', size: 'L', measurements, methods: Object.assign({ registry: 1 }, Object.fromEntries(Object.keys(FORM).filter((k) => measurements[k] != null).map((k) => [k, FORM[k]]))) } });
+    p.garments[type] = Object.assign(Schema.emptyGarment(type), { favorite: 'perfect', anchor: { brand: 'Owned Brand', size: 'L', construction: 'set-in', measurements, ...(ALTERNATES[type] && !(opts && opts.noAlternates) && ALTERNATES[type](measurements) ? { alternates: ALTERNATES[type](measurements) } : {}), methods: Object.assign({ registry: 1 }, Object.fromEntries(Object.keys(FORM).filter((k) => measurements[k] != null).map((k) => [k, FORM[k]]))) } });
   });
   return p;
 }
 const HOODIE = { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 };
+/* the hoodie's sleeve also measured from the centre back ("measure more"), as the fixture page's chart measures it: a
+   chart read from a page never takes the shopper's answer for how its sleeves are attached, so a sleeve from the
+   shoulder seam, or shoulders seam to seam, are never compared there */
+/* the fixture page measures it 22 cm longer from the centre back than from the seam */
+const ALTERNATES = { hoodies: (m) => (typeof m.sleeveLength === 'number' ? [{ dimension: 'sleeveLength', method: 'center-back-to-cuff', value: m.sleeveLength + 22 }] : null) };
 const TEE = { unit: 'in', chestWidth: 21.5, bodyLength: 29 };
 
 (async () => {
@@ -233,14 +238,14 @@ const TEE = { unit: 'in', chestWidth: 21.5, bodyLength: 29 };
 
   /* signing in, as the site does: /api/auth sets the Fynd session cookie in this browser */
   let n = 0;
-  async function signIn(garments) {
+  async function signIn(garments, opts) {
     n += 1;
     const email = `shopper${n}.panel@example.test`;
     await context.clearCookies();
     const r = await context.request.post(`${API}/api/auth`, { data: { action: 'signup', name: 'Shopper', email, password: 'correct-horse-battery-staple', confirmPassword: 'correct-horse-battery-staple' }, headers: { 'x-forwarded-for': `203.0.113.${n + 10}` } });
     assert.strictEqual(r.status(), 200, 'signed up');
     const user = await users.byEmail(email);
-    if (garments) await fitProfiles.save(user.id, profileWith(garments));
+    if (garments) await fitProfiles.save(user.id, profileWith(garments, opts));
     return user;
   }
   /* product → chart → review, the steps every comparison passes */
@@ -283,7 +288,7 @@ const TEE = { unit: 'in', chestWidth: 21.5, bodyLength: 29 };
     assert.match(await text(panel, '#review-kind'), /measures the garment itself/);
     assert.strictEqual(await panel.isHidden('#review-confirm-row'), true);
     assert.strictEqual(await panel.inputValue('#review-unit'), 'cm');
-    assert.deepStrictEqual(await panel.$$eval('select[data-role="method"]', (ns) => ns.map((s) => s.value)), [FORM.chestWidth, FORM.shoulderWidth, FORM.bodyLength, FORM.sleeveLength]);
+    assert.deepStrictEqual(await panel.$$eval('select[data-role="method"]', (ns) => ns.map((s) => s.value)), [FORM.chestWidth, FORM.shoulderWidth, FORM.bodyLength, 'center-back-to-cuff']);
     assert.deepStrictEqual(await texts(panel, '#review-problems li'), []);
     assert.strictEqual(await panel.isDisabled('#to-reference'), false);
     const before = hits.length;
@@ -313,7 +318,8 @@ const TEE = { unit: 'in', chestWidth: 21.5, bodyLength: 29 };
   await test('W2: the top-ranked size is outside a band, the next is inside every one — the panel recommends the next, says why, and still shows the ranking as the engine made it', async () => {
     /* beside this chart, L ranks first but is 4 cm (1.57 in) longer in the body than this garment — past the 1.5 in band;
        M ranks second (a near tie with L) and is inside every band. Fynd's real handler decides. */
-    await signIn({ hoodies: { unit: 'cm', chestWidth: 57, bodyLength: 64, shoulderWidth: 49.5, sleeveLength: 62.5 } });
+    /* chest 57.5 (57 when the shoulders were compared too: they aren't now — the product doesn't say how its sleeves are attached) */
+    await signIn({ hoodies: { unit: 'cm', chestWidth: 57.5, bodyLength: 64, shoulderWidth: 49.5, sleeveLength: 62.5 } });
     const { panel, close } = await open('variants-hoodie.html');
     await toReview(panel);
     const before = hits.length;
@@ -326,7 +332,7 @@ const TEE = { unit: 'in', chestWidth: 21.5, bodyLength: 29 };
     assert.deepStrictEqual(rows, [['S', '', '#4'], ['M', 'recommended', '#2'], ['L', '', '#1'], ['XL', '', '#3']]);
     /* why: M meets the criteria; L ranks closer but is outside them */
     const said = (await texts(panel, '#result-messages p')).join(' ');
-    assert.match(said, /^M is the closest size to your reference across chest, length, shoulders and sleeves that meets Fynd’s comparison criteria\. L ranks closer overall, but differs from your reference by more than Fynd’s comparison accepts on at least one measurement\.$/);
+    assert.match(said, /^M is the closest size to your reference across chest, length and sleeves that meets Fynd’s comparison criteria\. L ranks closer overall, but differs from your reference by more than Fynd’s comparison accepts on at least one measurement\.$/);
     /* M's own confidence and caveats — never lowered for L, never about L */
     assert.match(await text(panel, '#result-reliability'), /^Reliability: medium — /);
     const caveats = await texts(panel, '#result-caveats li');
@@ -402,7 +408,8 @@ const TEE = { unit: 'in', chestWidth: 21.5, bodyLength: 29 };
   });
 
   await test('a chart measuring length and sleeve from the centre back: too few in common with a garment measured from the shoulder — the panel asks for exactly those two, with how to measure them, saves them to the saved garment and compares again', async () => {
-    const user = await signIn({ hoodies: HOODIE });
+    /* the garment measured only the form's way: no alternates yet */
+    const user = await signIn({ hoodies: HOODIE }, { noAlternates: true });
     const { panel, close } = await open('centre-back-hoodie.html');
     await toReview(panel);
     assert.deepStrictEqual(await panel.$$eval('select[data-role="method"]', (ns) => ns.map((s) => s.value)), [FORM.chestWidth, FORM.shoulderWidth, 'center-back-to-hem', 'center-back-to-cuff']);
@@ -716,7 +723,11 @@ const TEE = { unit: 'in', chestWidth: 21.5, bodyLength: 29 };
     const cmpBefore = hits.length;
     await toResults(panel, 'tshirts');
     await view(panel, 'results');
-    assert.strictEqual(await text(panel, '#result-size'), 'M', 'the engine decides, from the page’s own numbers');
+    /* the engine decides, from the page's own numbers: the sleeve is measured from the shoulder seam, and the page's chart
+       (a catalogue candidate) never takes the shopper's answer for how its sleeves are attached — so chest and length
+       alone, too few to name a size */
+    assert.strictEqual(await text(panel, '#result-size'), '', 'the engine decides, from the page’s own numbers');
+    assert.strictEqual(await text(panel, '#result-title'), 'Fynd can’t compare these sizes reliably');
     assert.match(await text(panel, '#result-source'), /interpreted with Fynd’s AI and confirmed by you\. Not verified by Fynd\./);
     const chart = hits.slice(cmpBefore).find((h) => h.method === 'POST' && h.path === '/api/size-recommendation').body.chart;
     assert.deepStrictEqual(chart.sizes[1].provenance.chestWidth, { source: 'page-table', header: 'Chest ½ width', corrected: false, interpretedBy: 'ai' });

@@ -90,7 +90,8 @@ const https = require('https');
 const zlib = require('zlib');
 const store = require('../_store');
 const sizingSchema = require('./schema');
-const { RECORDS, recordFrom } = require('./records');
+const sizingRecords = require('./records');
+const { recordFrom } = sizingRecords;
 const officialCharts = require('./official-charts');
 const engine = require('./engine');
 const pageAccess = require('./page-access');
@@ -938,8 +939,9 @@ async function chartFor(rawUrl, options) {
    category at a time; a chart is for any), and — when the link names a
    market — that market. A US record never answers for a UK page. */
 function recordFor(checked) {
-  for (const category of new Set(RECORDS.map((r) => r.category))) {
-    const m = engine.matchProduct({ brand: checked.brand, product: { url: checked.url } }, RECORDS, category);
+  const pool = sizingRecords.all();
+  for (const category of new Set(pool.map((r) => r.category))) {
+    const m = engine.matchProduct({ brand: checked.brand, product: { url: checked.url } }, pool, category);
     if (m && m.by === 'link' && (!checked.market || m.record.region === checked.market)) return m.record;
   }
   return null;

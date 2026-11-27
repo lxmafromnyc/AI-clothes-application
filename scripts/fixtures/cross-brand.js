@@ -183,9 +183,12 @@ function everlaneRecord(fixture, methods) {
   };
 }
 
-/* the same record, marked checked — in this test's memory only, and named */
+/* the same record, marked checked and approved — in this test's memory
+   only, and named (./as-checked.js approvedCopy: the approval stays in
+   this process's memory, bound to the copy's own content). The fixture's
+   sleeves are stated set-in as TEST FIXTURE data, like its numbers. */
 function asCheckedCopy(record) {
-  return Object.assign(JSON.parse(JSON.stringify(record)), { verification: { status: 'verified', checkedBy: 'Test checker (fixture)', checkedAt: '2026-10-24' } });
+  return require('./as-checked').approvedCopy(record, { construction: 'set-in' });
 }
 
 module.exports = {

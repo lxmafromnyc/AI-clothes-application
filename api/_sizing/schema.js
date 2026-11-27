@@ -37,10 +37,15 @@
                   (the engine says which), never stored here
      unknown      not published
 
-   A record is "verified" only when `verification.status` is "verified"
-   and it names who checked it and when. Only a check against the
-   record's sources, approved by the people who own this data, sets it;
-   the code never does.
+   A record is "verified" only when `verification.status` is "verified",
+   it names who checked it and when, no review is pending, AND a human
+   approval in ./approvals.json names it (approvalOf, below): approved
+   by a named person — never an automated audit, script or test —
+   bound to the record's current content by its hash, and listing
+   archived evidence for every source the record cites. A field on the
+   record itself ("approvedBy" or any other) is never an approval. Only
+   a check against the record's sources, approved by the people who own
+   this data, sets either; the code never does.
 
    Who a product is sold to (`product.audience`) is not the same as what
    its chart is called: Nike sells the Club hoodie to men, on a chart it
@@ -55,7 +60,12 @@
    method its dimension names, from the chart's `source`. Its status is
    worked out, never stored on the cell (measurementStatus, below):
 
-     verified       the record is verified, and nothing below lowers it
+     verified       the record is verified, the measurement is eligible
+                    (garmentEligibility: a finished-garment chart, a
+                    stated method with the brand's quoted words from an
+                    archived source, and — for a measurement taken from
+                    a seam — the sleeve construction stated), and
+                    nothing below lowers it
      crowdsourced   the chart's numbers were gathered from shoppers'
                     own measurements (`origin: "crowdsourced"`), or the
                     dimension says so (`status: "crowdsourced"`)
@@ -81,7 +91,10 @@
 
 'use strict';
 
+const crypto = require('crypto');
 const methods = require('./methods');
+/* the human approvals (see the header); an array the code only reads */
+const APPROVALS = require('./approvals.json').approvals;
 
 const SIZING_VERSION = 2;
 
@@ -358,18 +371,119 @@ function validate(record) {
 const METHOD_KINDS = methods.METHOD_KINDS;
 const methodKind = methods.methodKind;
 
-const isVerified = (record) => Boolean(record && record.verification && record.verification.status === 'verified');
+/* ---------------------------------------------------------
+   Human approval (./approvals.json)
+   ---------------------------------------------------------
+   A record's content, as the hash an approval is bound to: every field
+   but `verification` (which the approval itself completes), keys in a
+   fixed order. Change any value, method, source or note after approval
+   and the approval no longer matches. */
+function canonical(v) {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`;
+  if (isPlainObject(v)) return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(v[k])}`).join(',')}}`;
+  return JSON.stringify(v === undefined ? null : v);
+}
+function contentHash(record) {
+  const rest = Object.assign({}, record);
+  delete rest.verification;
+  return crypto.createHash('sha256').update(canonical(rest)).digest('hex');
+}
+
+/* names an automated check goes by: never a person's approval */
+const AUTOMATED_APPROVER = /claude|automat|audit|\bbot\b|-bot|script|\bci\b|github|pipeline|extract|scrap|crawler|validator|\bllm\b|\bmodel\b/i;
+const SHA256 = /^[a-f0-9]{64}$/;
+
+/* Every URL a record cites for its numbers and methods: each chart's
+   source and each dimension's methodSource. */
+function citedUrls(record) {
+  const urls = new Set();
+  Object.values((record && record.charts) || {}).forEach((chart) => {
+    if (!isPlainObject(chart)) return;
+    if (chart.source) urls.add(chart.source);
+    Object.values(chart.dimensions || {}).forEach((d) => { if (d && d.methodSource && d.methodSource.url) urls.add(d.methodSource.url); });
+  });
+  return [...urls];
+}
+
+/* Why an approval entry can't stand for this record ([] when it can). */
+function approvalProblems(record, entry) {
+  const problems = [];
+  if (!isPlainObject(entry)) return ['no approval'];
+  const by = typeof entry.approvedBy === 'string' ? entry.approvedBy.trim() : '';
+  if (!by) problems.push('names no approver');
+  else if (AUTOMATED_APPROVER.test(by)) problems.push('approver is an automated check, not a person');
+  if (!isDate(entry.approvedAt)) problems.push('no approval date');
+  if (entry.contentHash !== contentHash(record)) problems.push('record changed since it was approved');
+  const evidence = Array.isArray(entry.evidence) ? entry.evidence : [];
+  const valid = evidence.filter((e) => isPlainObject(e) && officialUrl(record.brand, e.url) && typeof e.archive === 'string' && e.archive.trim() && SHA256.test(String(e.sha256)));
+  if (valid.length !== evidence.length) problems.push('evidence entry without an official URL, an archived copy and its sha256');
+  const covered = new Set(valid.map((e) => e.url));
+  const missing = citedUrls(record).filter((u) => !covered.has(u));
+  if (!evidence.length) problems.push('no archived evidence');
+  else if (missing.length) problems.push(`no archived evidence for ${missing.join(', ')}`);
+  return problems;
+}
+
+/* The human approval that stands for this record, or null. */
+function approvalOf(record) {
+  if (!isPlainObject(record) || typeof record.id !== 'string') return null;
+  return APPROVALS.find((a) => isPlainObject(a) && a.recordId === record.id && approvalProblems(record, a).length === 0) || null;
+}
+
+/* Verified: its own verification says so, names who checked it and
+   when, no review is pending, and a human approval stands for it. */
+function isVerified(record) {
+  const v = record && record.verification;
+  if (!v || v.status !== 'verified' || typeof v.checkedBy !== 'string' || !v.checkedBy.trim() || !isDate(v.checkedAt)) return false;
+  if (record.review && record.review.status === 'pending') return false;
+  return approvalOf(record) !== null;
+}
+
+/* the methods that start or end at a seam: where that seam sits depends
+   on how the sleeves are set (a raglan has no shoulder seam; a dropped
+   shoulder puts it on the upper arm), so they need the construction */
+const SEAM_METHODS = { sleeveLength: 'shoulder-seam-to-cuff', shoulderWidth: 'seam-to-seam' };
+const isSeamMethod = (dim, method) => SEAM_METHODS[dim] === method;
+
+/* Whether one garment measurement of a sizing record may be compared:
+   { eligible, reasons: [{ code, why }] }. The one place that decides it
+   (measurementStatus, and through it the engine's usableDim; the method
+   itself is also held by methods.relation in the engine's comparable(),
+   which says "method not stated" in its own words). */
+function garmentEligibility(record, dim) {
+  const reasons = [];
+  const no = (code, why) => reasons.push({ code, why });
+  const chart = record && record.charts && record.charts.garment;
+  const spec = chart && chart.dimensions && chart.dimensions[dim];
+  if (!spec) return { eligible: false, reasons: [{ code: 'no-measurement', why: 'no such garment measurement' }] };
+  if (chart.measures !== MEASURES.garment) no('not-garment', 'not marked as a finished-garment measurement');
+  if (chart.origin === 'crowdsourced' || spec.status === 'crowdsourced') no('crowdsourced', 'gathered from shoppers');
+  else if (chart.origin !== undefined && !['official-published', 'physical-measurement'].includes(chart.origin)) no('origin', 'where the numbers come from isn\'t one Fynd accepts');
+  if (spec.status === 'unverified') no('marked-unverified', 'marked unverified by its reviewer');
+  if (!methods.isMethod(dim, spec.method) || spec.method === methods.NOT_STATED) no('method-not-stated', 'how it was measured isn\'t stated');
+  const src = isPlainObject(spec.methodSource) ? spec.methodSource : {};
+  if (!officialUrl(record.brand, src.url) || typeof src.says !== 'string' || !src.says.trim()) no('method-source', 'no method source on the brand\'s own site');
+  if (!officialUrl(record.brand, chart.source)) no('chart-source', 'chart source not on the brand\'s own site');
+  if (isSeamMethod(dim, spec.method)) {
+    const c = record.construction;
+    if (!isPlainObject(c) || !SLEEVE_TYPES.includes(c.sleeve) || typeof c.source !== 'string' || !c.source) no('construction', 'measured from a seam, and how the sleeves are set isn\'t stated');
+  }
+  if (!isVerified(record)) no('not-approved', 'record not verified with a human approval');
+  return { eligible: reasons.length === 0, reasons };
+}
 
 /* One garment dimension's status (see the header): "verified",
    "crowdsourced" or "unverified"; null when the record has no such
-   garment dimension. */
+   garment dimension. A value published without its method can still be
+   a checked copy of what the brand publishes — it is never compared
+   all the same (methods.relation), and the engine says why. */
 function measurementStatus(record, dim) {
   const chart = record && record.charts && record.charts.garment;
   const spec = chart && chart.dimensions && chart.dimensions[dim];
   if (!spec) return null;
   if (chart.origin === 'crowdsourced' || spec.status === 'crowdsourced') return 'crowdsourced';
   if (spec.status === 'unverified') return 'unverified';
-  return isVerified(record) ? 'verified' : 'unverified';
+  return garmentEligibility(record, dim).reasons.every((r) => r.code === 'method-not-stated') ? 'verified' : 'unverified';
 }
 
 /* One size's garment measurement as a whole: { value, unit, method,
@@ -407,6 +521,15 @@ module.exports = {
   marketOf,
   validate,
   isVerified,
+  contentHash,
+  approvalOf,
+  approvalProblems,
+  citedUrls,
+  APPROVALS,
+  AUTOMATED_APPROVER,
+  SEAM_METHODS,
+  isSeamMethod,
+  garmentEligibility,
   measurementStatus,
   measurementOf,
   METHOD_KINDS,

@@ -74,7 +74,7 @@ function request(compared, selected, record) {
   const anchor = found && found.entry.anchor;
   if (!anchor || !anchor.measurements) return null;
   /* a reference Fynd reads from its own checked record of the product named, not the shopper's measurements: alternates can't help */
-  const match = engine.matchProduct(anchor, require('./records').RECORDS, found.category, { exact: true });
+  const match = engine.matchProduct(anchor, require('./records').all(), found.category, { exact: true });
   if (match && require('./schema').isVerified(match.record)) return null;
   const shared = Array.isArray(compared.dimensionsShared) ? compared.dimensionsShared : [];
   const skipped = Array.isArray(compared.notCompared) ? compared.notCompared : [];

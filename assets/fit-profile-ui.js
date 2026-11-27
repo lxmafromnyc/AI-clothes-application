@@ -305,6 +305,8 @@
       </svg>
       <figcaption>A chest, armpit to armpit · B length, top of the shoulder to the hem · C shoulders, seam to seam · D sleeve, shoulder seam to cuff</figcaption>
     </figure>`;
+  /* how a garment's sleeves are attached, in the shopper's words (Schema.SLEEVE_CONSTRUCTIONS) */
+  const CONSTRUCTION_WORDS = { 'set-in': 'Set-in: a seam around the top of the arm', raglan: 'Raglan: a seam from the underarm to the collar', 'drop-shoulder': 'Dropped: the shoulder seam sits down the arm' };
   const DIAGRAM_LETTER = { chestWidth: 'A', bodyLength: 'B', shoulderWidth: 'C', sleeveLength: 'D' };
 
   function addGarment(id, entry, settings) {
@@ -415,6 +417,15 @@
               </div>`;
             }).join('')}
           </div>
+          <div class="profile-field" data-field="${at}.anchor.construction">
+            <label class="profile-label" for="${p}-construction">How the sleeves are attached</label>
+            <span class="select-wrap"><select class="profile-input profile-select" id="${p}-construction" data-part="construction" aria-describedby="${p}-construction-hint ${p}-construction-error">
+              <option value="">Don’t know</option>
+              ${Schema.SLEEVE_CONSTRUCTIONS.map((c) => `<option value="${c}">${CONSTRUCTION_WORDS[c]}</option>`).join('')}
+            </select></span>
+            <p class="profile-hint" id="${p}-construction-hint">Shoulders and sleeves measured from a seam are compared only with a garment made the same way. Fynd doesn’t guess.</p>
+            <p class="profile-error" id="${p}-construction-error"></p>
+          </div>
           <div class="profile-field" data-field="${at}.anchor.notes">
             <label class="profile-label" for="${p}-notes">Notes on the fit you like</label>
             <textarea class="profile-input compare-notes" id="${p}-notes" data-part="notes" maxlength="200" rows="2" placeholder="Like: roomy in the body, sleeves just past the wrist" aria-describedby="${p}-notes-error"></textarea>
@@ -501,7 +512,9 @@
       editor.querySelector(`[data-measure-key="${key}"]`).value = m && typeof m[key] === 'number' ? String(m[key]) : '';
     });
     piece(editor, 'notes').value = a.notes || '';
-    piece(editor, 'more').open = Boolean(product || (a.likes && a.likes.length) || m || a.notes);
+    /* only what the shopper said: a garment saved without an answer shows "Don't know" */
+    piece(editor, 'construction').value = Schema.SLEEVE_CONSTRUCTIONS.includes(a.construction) ? a.construction : '';
+    piece(editor, 'more').open = Boolean(product || (a.likes && a.likes.length) || m || a.notes || a.construction);
     paintReferenceUnit(editor);
   }
 
@@ -606,11 +619,13 @@
     });
     const unitChoice = editor.querySelector(`input[name="${p}-unit"]:checked`);
     const notes = piece(editor, 'notes').value.trim();
+    const construction = piece(editor, 'construction').value;
     return {
       product,
       likes: likes.length ? likes : null,
       measurements: Object.keys(measures).length ? Object.assign({ unit: unitChoice ? unitChoice.value : null }, measures) : null,
-      notes: notes || null
+      notes: notes || null,
+      construction: construction || null
     };
   }
 
@@ -1070,7 +1085,7 @@
     editors().forEach((editor) => {
       const g = Schema.garmentOf(editor.dataset.garment);
       const entry = g.favorite && body.garments[g.id];
-      if (entry && entry.anchor) ['product', 'likes', 'measurements', 'notes'].forEach((k) => { if (!entry.anchor[k]) entry.anchor[k] = null; });
+      if (entry && entry.anchor) ['product', 'likes', 'measurements', 'notes', 'construction'].forEach((k) => { if (!entry.anchor[k]) entry.anchor[k] = null; });
     });
     const result = await global.Account.fitProfile.save(body);
     busy(false);

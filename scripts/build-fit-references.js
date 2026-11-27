@@ -25,7 +25,7 @@ const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(ROOT, 'assets', 'fit-reference-data.js');
-const { RECORDS } = require('../api/_sizing/records');
+const sizingRecords = require('../api/_sizing/records');
 const sizingSchema = require('../api/_sizing/schema');
 
 /* a record's category → the Fit Anchor's kind of garment */
@@ -82,10 +82,11 @@ function bodyOf(chart, units) {
 function build() {
   const products = [];
   const bodyCharts = new Map();
-  RECORDS.slice().sort((a, b) => a.id.localeCompare(b.id)).forEach((r) => {
+  sizingRecords.all().slice().sort((a, b) => a.id.localeCompare(b.id)).forEach((r) => {
     const category = CATEGORY[r.category];
     if (!category) return;
-    const verification = r.verification && r.verification.status === 'verified' ? 'verified' : 'unverified';
+    /* verified only with its human approval (schema.isVerified), never on its own say-so */
+    const verification = sizingSchema.isVerified(r) ? 'verified' : 'unverified';
     const garment = garmentOf(r);
     if (garment) {
       /* a garment chart is checked only when each of its measurements is:

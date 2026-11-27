@@ -86,15 +86,16 @@
   ],
   "retrievedAt": "2026-10-10",
   "verification": {
-    "status": "verified",
-    "checkedBy": "claude-code-source-audit",
-    "checkedAt": "2026-10-10"
+    "status": "unverified",
+    "checkedBy": null,
+    "checkedAt": null
   },
   "notes": [
     "Who the product is for and what the chart is called are kept apart: the product is sold to men (product.audience \"men\", from its page title), while the chart it links to is Nike's \"Gender Neutral (Men's Based) Size Chart\" (charts.body.designation \"gender-neutral, men's-based\"). Sizes are on the men's scale.",
     "Nike publishes body measurements only for this product; no finished-garment measurements are recorded.",
     "Tall sizes (S Tall to 4XL Tall) share the regular sizes' chest ranges; only regular sizes are recorded.",
     "The chart also lists waist and hip ranges and women's equivalent sizes; neither is recorded, and women's sizing is not supported yet.",
-    "The chest chart is Nike's general \"Gender Neutral (Men's Based)\" chart, which the product page's Size Guide links to; it is not specific to this product. Nike defines chest as \"around the fullest part of your chest\" (a body measurement)."
+    "The chest chart is Nike's general \"Gender Neutral (Men's Based)\" chart, which the product page's Size Guide links to; it is not specific to this product. Nike defines chest as \"around the fullest part of your chest\" (a body measurement).",
+    "2026-11-26: verification withdrawn. The only check (2026-10-10, checkedBy \"claude-code-source-audit\") was an automated source audit, not a person's approval, and no archived copy of the sources is kept. Body measurements only; unverified until a person approves it (api/_sizing/approvals.json)."
   ]
 }

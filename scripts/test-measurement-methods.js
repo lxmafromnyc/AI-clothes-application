@@ -56,7 +56,14 @@ const ALL_ZARA = sizing.RECORDS.filter((r) => r.brand === 'Zara').map((r) => r.i
 const GARMENT_RECORDS = sizing.RECORDS.filter((r) => r.charts.garment).map((r) => r.id);
 const DIMS = methods.DIMENSIONS;
 const copy = (v) => JSON.parse(JSON.stringify(v));
-const verified = (id) => { const r = copy(sizing.byId(id)); r.verification = { status: 'verified', checkedBy: 'Test checker', checkedAt: '2026-10-31' }; if (r.review) r.review.status = 'done'; return r; };
+/* verified and approved, in this test's memory only (fixtures/as-checked.js approvedCopy); a
+   record changed after that is approved again as changed (reapproved) */
+const { approvedCopy } = require('./fixtures/as-checked');
+/* Zara and UNIQLO don't say how their sleeves are attached; these tests are about methods, so the
+   copies state set-in as TEST FIXTURE data, and the shopper's garments say set-in too */
+const SET_IN = { construction: 'set-in' };
+const verified = (id) => approvedCopy(copy(sizing.byId(id)), SET_IN);
+const reapproved = (r) => approvedCopy(r);
 const rowOf = (record, size) => Object.fromEntries(Object.entries(record.charts.garment.sizes[size]).map(([d, c]) => [d, c.value]));
 const codes = (d) => d.reasons.map((r) => r.code);
 
@@ -64,7 +71,7 @@ const codes = (d) => d.reasons.map((r) => r.code);
 const measuredRef = (category, values, unit, savedMethods) => {
   const p = Schema.empty();
   p.garments[category] = Object.assign(Schema.emptyGarment(category), { favorite: 'perfect', line: 'men', fitGoal: 'true-to-size',
-    anchor: Object.assign({ brand: null, size: 'M', measurements: Object.assign({ unit }, values) }, savedMethods ? { methods: savedMethods } : {}) });
+    anchor: Object.assign({ brand: null, size: 'M', construction: 'set-in', measurements: Object.assign({ unit }, values) }, savedMethods ? { methods: savedMethods } : {}) });
   return p;
 };
 const productRef = (category, product, size) => {
@@ -130,7 +137,7 @@ const DEVELOPER = /\b(engine|policy|reason code|record|registry|validate|undefin
       record.charts.garment.dimensions[dim].method = target;
       if (dim === 'chestWidth' && target !== 'flat-width-armpit-to-armpit') delete record.charts.garment.dimensions[dim].derivedCircumference;
       const saved = Object.assign({ registry: 1 }, Object.fromEntries(DIMS.map((d) => [d, record.charts.garment.dimensions[d].method])), { [dim]: ref });
-      const v = engine.validate(measuredRef('hoodies', rowOf(base, 'M'), base.units, saved), record);
+      const v = engine.validate(measuredRef('hoodies', rowOf(base, 'M'), base.units, saved), reapproved(record));
       const x = v.dimensions.find((y) => y.dim === dim);
       const r = methods.relation(dim, ref, target);
       assert.strictEqual(x.compared, Boolean(r), `${dim}: reference ${ref}, product ${target}`);
@@ -176,12 +183,12 @@ const DEVELOPER = /\b(engine|policy|reason code|record|registry|validate|undefin
     /* with every method saved as UNIQLO measures, the shopper's own hoodie is compared: OK */
     const all = decision.decide(measuredRef('hoodies', m, uq.units, { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'center-back-to-hem', sleeveLength: 'center-back-to-cuff', shoulderWidth: 'seam-to-seam' }), uq);
     assert.deepStrictEqual([all.outcome, all.size, all.comparison], ['OK', 'M', 'garment-to-garment']);
-  }));
+  }, SET_IN));
 
   /* ---------- a label is never a garment's measurements ---------- */
 
   await test('a brand and size alone — as the reference or as a usual size — never becomes garment measurements, in any category, for any product', () => asChecked(GARMENT_RECORDS, () => {
-    sizing.RECORDS.filter((r) => r.charts.garment && engine.CATEGORY_PARAMS[r.category]).forEach((record) => {
+    sizing.all().filter((r) => r.charts.garment && engine.CATEGORY_PARAMS[r.category]).forEach((record) => {
       const brand = record.brand;
       record.sizes.forEach((size) => {
         [labelOnly(record.category, brand, size), usualSize(record.category, brand, size), usualSize(record.category, brand, size, 40)].forEach((p) => {
@@ -209,7 +216,7 @@ const DEVELOPER = /\b(engine|policy|reason code|record|registry|validate|undefin
     const partly = engine.recommend(productRef('hoodies', { name: 'Basic hoodie', url: null }, 'M'), b);
     assert.ok(!partly.anchor || !partly.anchor.match, JSON.stringify(partly.anchor));
     assert.notStrictEqual(partly.method, 'reference-garment');
-  }));
+  }, SET_IN));
 
   /* ---------- no body fallback for a garment comparison ---------- */
 
@@ -227,7 +234,8 @@ const DEVELOPER = /\b(engine|policy|reason code|record|registry|validate|undefin
     assert.deepStrictEqual([chestOnly.outcome, chestOnly.size, chestOnly.comparison], ['OK', 'M', 'body-plus-assumed-room']);
   }));
 
-  await test('a reference beside a body-only chart is INSUFFICIENT_DATA "body-vs-garment", even with a chest measurement; the chest alone is still sized by the chart', () => {
+  await test('a reference beside a body-only chart is INSUFFICIENT_DATA "body-vs-garment", even with a chest measurement; the chest alone is still sized by the chart', () => asChecked([NIKE], () => {
+    /* Nike's body chart, approved in this test's memory only: its automated verification was withdrawn */
     const nike = sizing.byId(NIKE);
     const p = withChest(measuredRef('hoodies', { chestWidth: 23.5, bodyLength: 28, sleeveLength: 24, shoulderWidth: 19 }, 'in'), 39);
     const d = decision.decide(p, nike);
@@ -235,11 +243,11 @@ const DEVELOPER = /\b(engine|policy|reason code|record|registry|validate|undefin
     assert.ok(d.dimensions.every((x) => x.status === 'body-vs-garment'));
     const chestOnly = decision.decide(withChest(Object.assign(Schema.empty(), { garments: { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { line: 'men', fitGoal: 'true-to-size' }) } }), 39), nike);
     assert.deepStrictEqual([chestOnly.outcome, chestOnly.size, chestOnly.comparison], ['OK', 'M', 'body-to-body-chart']);
-  });
+  }));
 
   /* ---------- per-dimension statuses ---------- */
 
-  await test('each dimension\'s status, from real records and in-memory copies: every status the decision can give, with its own words', () => {
+  await test('each dimension\'s status, from real records and in-memory copies: every status the decision can give, with its own words', () => asChecked([NIKE], () => {
     const z = verified(ZARA);
     const m = rowOf(z, 'M');
     const dimsOf = (p, record) => Object.fromEntries(decision.decide(p, record).dimensions.map((x) => [x.dim, x]));
@@ -254,20 +262,20 @@ const DEVELOPER = /\b(engine|policy|reason code|record|registry|validate|undefin
     around.charts.garment.dimensions.chestWidth.method = 'garment-circumference';
     delete around.charts.garment.dimensions.chestWidth.derivedCircumference;
     z.sizes.forEach((s) => { around.charts.garment.sizes[s].chestWidth.value *= 2; });
-    expect(dimsOf(measuredRef('hoodies', m, z.units), around), 'chestWidth', 'convertible-estimated');
+    expect(dimsOf(measuredRef('hoodies', m, z.units), reapproved(around)), 'chestWidth', 'convertible-estimated');
     /* the product's sleeve from the centre back, its length not stated, its shoulders unchecked or unpublished */
     const odd = copy(z);
     odd.charts.garment.dimensions.sleeveLength.method = 'center-back-to-cuff';
     odd.charts.garment.dimensions.bodyLength.method = 'not-stated';
     odd.charts.garment.dimensions.shoulderWidth.status = 'unverified';
-    const oddDims = dimsOf(measuredRef('hoodies', m, z.units), odd);
+    const oddDims = dimsOf(measuredRef('hoodies', m, z.units), reapproved(odd));
     expect(oddDims, 'sleeveLength', 'incompatible-method');
     expect(oddDims, 'bodyLength', 'method-not-stated');
     expect(oddDims, 'shoulderWidth', 'unverified');
     const noShoulders = copy(z);
     delete noShoulders.charts.garment.dimensions.shoulderWidth;
     z.sizes.forEach((s) => { delete noShoulders.charts.garment.sizes[s].shoulderWidth; });
-    expect(dimsOf(measuredRef('hoodies', m, z.units), noShoulders), 'shoulderWidth', 'missing-target');
+    expect(dimsOf(measuredRef('hoodies', m, z.units), reapproved(noShoulders)), 'shoulderWidth', 'missing-target');
     /* the reference's own gap */
     expect(dimsOf(measuredRef('hoodies', Object.assign({}, m, { sleeveLength: null }), z.units), z), 'sleeveLength', 'missing-reference');
     /* a body chart: never a garment */
@@ -278,7 +286,7 @@ const DEVELOPER = /\b(engine|policy|reason code|record|registry|validate|undefin
       const text = decision.dimensionMessage({ dim: 'sleeveLength', status, reference: { words: 'from the shoulder seam to the cuff' }, target: { words: 'from the centre of the back of the neck to the cuff' } });
       assert.ok(/^Sleeves: /.test(text) && !DEVELOPER.test(text), text);
     });
-  });
+  }));
 
   /* ---------- unchanged ---------- */
 

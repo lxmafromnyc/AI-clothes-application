@@ -13,8 +13,14 @@
    the page (assets/find-fit-manual.js) and the server
    (api/size-recommendation.js): a candidate is
      { type, brand, name, size, unit, measurements: { chestWidth, … },
-       methods: { registry, chestWidth, … } }
-   with only the values given. Nothing is filled in: a value left blank
+       methods: { registry, chestWidth, … }, construction? }
+   with only the values given. `construction` is how the sleeves are
+   attached, as the shopper says of the item they copied by hand (set-in,
+   raglan or drop-shoulder); left out when not said — never assumed — and
+   a measurement taken from a seam is then never compared
+   (api/_sizing/engine.js). readChart (a chart read from a product page by
+   a link or the extension) never reads one: that is a catalogue
+   candidate, whose construction only product evidence can give. Nothing is filled in: a value left blank
    stays missing.
 
    Plausible values: where a value is measured the way the reference form
@@ -77,6 +83,14 @@
     return null;
   }
 
+  const CONSTRUCTIONS = ['set-in', 'raglan', 'drop-shoulder'];
+  /* how the sleeves are attached, when said: one of CONSTRUCTIONS, or null */
+  function readConstruction(r, fail) {
+    if (blank(r.construction)) return null;
+    if (!CONSTRUCTIONS.includes(r.construction)) { fail('construction', 'Choose how the sleeves are attached — set-in, raglan or dropped — or “Don’t know”.'); return null; }
+    return r.construction;
+  }
+
   function readCandidate(raw) {
     const errors = [];
     const fail = (field, message) => errors.push({ field, message });
@@ -122,8 +136,9 @@
         }
       });
     }
+    const construction = readConstruction(r, fail);
     if (errors.length) return { candidate: null, errors };
-    return { candidate: { type, brand, name, size, unit, measurements, methods }, errors: [] };
+    return { candidate: Object.assign({ type, brand, name, size, unit, measurements, methods }, construction ? { construction } : {}), errors: [] };
   }
 
   /* ---------- a whole chart: several sizes at once ----------
@@ -233,6 +248,9 @@
         }
       }));
     }
+    /* a chart read from a product page (a link, the extension) is a catalogue candidate: how its sleeves are
+       attached comes only from evidence about the product, never from the shopper — so any `construction`
+       sent with it is not read, and its seam measurements stay unknown */
     if (errors.length) return { chart: null, errors, reason: 'invalid-chart' };
     return { chart: { type, brand, name, url, unit, methods, measures: 'finished-garment', sizes: out }, errors: [], reason: null };
   }
@@ -246,7 +264,7 @@
     return from === 'in' ? Math.round(value * CM_PER_INCH * 10) / 10 : Math.round((value / CM_PER_INCH) * 100) / 100;
   }
 
-  const FitCandidate = { readCandidate, readChart, MAX_SIZES, SOURCES, convertValue, rangeFor, METHODS, DIMS, LABELS, TYPES, TYPE_LABELS, LIMITS, REGISTRY, NOT_STATED };
+  const FitCandidate = { readCandidate, readChart, MAX_SIZES, SOURCES, convertValue, rangeFor, METHODS, DIMS, LABELS, TYPES, TYPE_LABELS, LIMITS, REGISTRY, NOT_STATED, CONSTRUCTIONS };
   global.FitCandidate = FitCandidate;
   if (typeof module !== 'undefined' && module.exports) module.exports = FitCandidate;
 })(typeof window !== 'undefined' ? window : globalThis);

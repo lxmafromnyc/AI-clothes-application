@@ -51,7 +51,8 @@
 
 'use strict';
 
-const { RECORDS, recordFrom, summary } = require('../records');
+const sizingRecords = require('../records');
+const { recordFrom, summary } = sizingRecords;
 const officialCharts = require('../official-charts');
 const schema = require('../schema');
 const listings = require('./uniqlo-listings.json');
@@ -110,7 +111,7 @@ function kindOf(p, group) {
    Being in the catalogue says nothing about sizing: a catalogue holds
    no measurements. */
 function statusOf(p) {
-  const record = RECORDS.find((r) => r.brand === 'UNIQLO' && r.region === 'US' && r.product.code === p.code) || null;
+  const record = sizingRecords.all().find((r) => r.brand === 'UNIQLO' && r.region === 'US' && r.product.code === p.code) || null;
   const s = record ? summary(record) : null;
   return Object.freeze({
     catalogue: p.catalogue ? 'authorized' : 'fynd-list',
@@ -132,7 +133,7 @@ function build(withCatalogue) {
     const kind = kindOf(p, group);
     out.set(p.code, Object.freeze(Object.assign(p, { holdsText: HOLDS[p.holds], group, categoryLabel: groupLabel, kind, kindLabel: kind ? KINDS[kind] : null, status: statusOf(p) })));
   };
-  RECORDS.filter((r) => r.brand === 'UNIQLO' && r.region === 'US').forEach((r) => add({
+  sizingRecords.all().filter((r) => r.brand === 'UNIQLO' && r.region === 'US').forEach((r) => add({
     code: r.product.code, name: r.product.name, url: r.product.url, category: r.category, line: r.line, imageUrl: null,
     /* the sizes it is sold in, from Fynd's record, so a size filter finds it */
     sizeLabels: r.sizes.slice(),
@@ -224,7 +225,7 @@ function detail(code, now) {
   const fresh = feed.freshness(now);
   const p = find(code, now);
   if (!p) return null;
-  const record = RECORDS.find((r) => r.brand === 'UNIQLO' && r.product.code === p.code) || null;
+  const record = sizingRecords.all().find((r) => r.brand === 'UNIQLO' && r.product.code === p.code) || null;
   const c = p.catalogue || null;
   const asOf = c ? day(feed.LOADED.catalog.lastSuccessfulSync) : null;
   const short = p.code.slice(1, 7);

@@ -1,0 +1,4 @@
+{
+  "about": "Human approvals of sizing records (api/_sizing/schema.js, approvalOf). A record is verified only when its own verification says so AND an entry here names it, matches its current content (contentHash: schema.contentHash, every field but verification), is approved by a named person (never an automated audit, script or test), and lists archived evidence (evidence[].archive under api/_sizing/evidence/, with its sha256) for every chart source and every methodSource URL the record cites. No code writes this file: an entry is added by hand, in its own reviewed change, together with the archived evidence and the matching update to scripts/test-sizing.js, which pins this list.",
+  "approvals": []
+}

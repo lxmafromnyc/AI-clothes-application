@@ -29,7 +29,8 @@
 const store = require('../../_catalog/store');
 const { CATEGORIES } = require('../../_catalog/product');
 const { createIndex, sortsFor } = require('../../_catalog/search');
-const { RECORDS, summary } = require('../records');
+const sizingRecords = require('../records');
+const { summary } = sizingRecords;
 const schema = require('../schema');
 const decision = require('../decision');
 
@@ -65,7 +66,7 @@ function createMerchantBrand(source) {
   /* Fynd's sizing record for a product, by brand, market and exact code */
   function recordFor(p) {
     const brand = p.brand || config.brands[0];
-    return RECORDS.find((r) => brandKey(r.brand) === brandKey(brand) && r.region === config.market && r.product.code === p.code) || null;
+    return sizingRecords.all().find((r) => brandKey(r.brand) === brandKey(brand) && r.region === config.market && r.product.code === p.code) || null;
   }
 
   function build() {
@@ -165,7 +166,7 @@ function createMerchantBrand(source) {
       sizes.variants = c.variants ? c.variants.map((v) => Object.assign({}, v)) : null;
       sizes.stockAsOf = asOf;
     }
-    const record = p.recordId ? RECORDS.find((r) => r.id === p.recordId) : null;
+    const record = p.recordId ? sizingRecords.all().find((r) => r.id === p.recordId) : null;
     const description = c.description ? { text: c.description, source: from } : null;
     const missing = ['price', 'description', 'care', 'reviews', 'availability'].filter((m) => !(m === 'price' && price) && !(m === 'availability' && stock) && !(m === 'description' && description));
     if (!sizes) missing.push('sizes');

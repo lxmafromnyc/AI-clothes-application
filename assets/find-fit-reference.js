@@ -354,6 +354,12 @@
     const order = global.FitCandidate ? global.FitCandidate.DIMS.filter((k) => Schema.GARMENT_MEASURE_KEYS.includes(k)) : Schema.GARMENT_MEASURE_KEYS;
     order.forEach((k) => grid.append(measureRow(k, m[k])));
     more.append(grid);
+    /* how its sleeves are attached, only as the shopper says it: seam measurements are compared
+       only between garments stated to be made the same way, never assumed (api/_sizing/engine.js) */
+    const sleeves = select('ffr-construction', [['', 'Don’t know'], ['set-in', 'Set-in: a seam around the top of the arm'], ['raglan', 'Raglan: a seam from the underarm to the collar'], ['drop-shoulder', 'Dropped: the shoulder seam sits down the arm']], a.construction || '');
+    sleeves.addEventListener('change', () => { if (global.FyndMetrics) global.FyndMetrics.manualInput('ffr-construction'); });
+    more.append(field('How the sleeves are attached', sleeves,
+      'Shoulders and sleeves measured from a seam are compared only when both garments are made the same way. Fynd doesn’t guess.'));
     area.append(more);
 
     const actions = el('div', 'ffr-actions');
@@ -986,10 +992,11 @@
     const anchor = { brand: v('ffr-brand') || null, size: v('ffr-size') || null };
     if (product) anchor.product = product;
     if (anyMeasure) anchor.measurements = Object.assign({ unit: v('ffr-unit') }, measurements);
+    if (anyMeasure && v('ffr-construction')) anchor.construction = v('ffr-construction');
     return { type, garment: { favorite: v('ffr-favorite') || 'perfect', line: v('ffr-line') || null, anchor } };
   }
 
-  const FIELD_IDS = { brand: 'ffr-brand', size: 'ffr-size', 'product.name': 'ffr-product', 'product.url': 'ffr-product', 'measurements.unit': 'ffr-unit' };
+  const FIELD_IDS = { brand: 'ffr-brand', size: 'ffr-size', 'product.name': 'ffr-product', 'product.url': 'ffr-product', 'measurements.unit': 'ffr-unit', construction: 'ffr-construction' };
   Schema.GARMENT_MEASURE_KEYS.forEach((k) => { FIELD_IDS[`measurements.${k}`] = `ffr-m-${k}`; });
   function showErrors(list) {
     root.querySelectorAll('.ffr-error').forEach((n) => { n.textContent = ''; n.classList.remove('show'); });
