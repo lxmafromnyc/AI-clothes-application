@@ -485,9 +485,10 @@ const FYND_FIVE = ['Sweat Oversized Pullover Hoodie', 'Sweat Pullover Hoodie', '
 
   await test('the exact product, not yet checked: its measurements do not stand in', () => {
     const exact = owning({ brand: 'UNIQLO', size: 'M', product: { url: 'https://www.uniqlo.com/us/en/products/E475377-000/00' } });
-    const item = records.byId(ITEM);
-    /* the item checked, the reference left as production holds it */
+    /* the item checked (its approved copy, read inside), the reference left as production holds it */
     return asChecked([ITEM], () => {
+      const item = records.byId(ITEM);
+      assert.ok(require('../api/_sizing/schema').isVerified(item), 'the item is checked');
       assert.strictEqual(engine.validate(exact, item).code, 'no-reference-measurements');
     });
   });

@@ -36,7 +36,11 @@ const Schema = require('../assets/fit-profile-schema.js');
 const sizingSchema = require('../api/_sizing/schema');
 const sizing = require('../api/_sizing/records');
 const engine = require('../api/_sizing/engine');
-const { asChecked } = require('./fixtures/as-checked');
+/* UNIQLO doesn't say how its sleeves are attached; these tests are about provenance, units and
+   methods, so each approved copy states set-in as TEST FIXTURE data (fixtures/as-checked.js), and
+   the shopper's measured garment says set-in too */
+const checked = require('./fixtures/as-checked').asChecked;
+const asChecked = (ids, fn) => checked(ids, fn, { construction: 'set-in' });
 const X = require('./fixtures/cross-brand');
 
 const out = (text) => process.stdout.write(text);
@@ -306,7 +310,8 @@ const diffs = (c, size) => Object.fromEntries(Object.entries(rowOf(c, size).dime
     const c = engine.compare(uniqloRef('M'), X.asCheckedCopy(ever));
     assert.deepStrictEqual([c.status, c.missing[0].code], ['insufficient', 'no-reference-measurements']);
     /* the evaluation suite may look at unverified numbers, and is still never given a recommendation */
-    const d = asChecked(['uniqlo-e475377-sweatshirt-us'], () => engine.compare(uniqloRef('M'), ever, { includeUnverified: true }));
+    const everStated = Object.assign(JSON.parse(JSON.stringify(ever)), { construction: require('./fixtures/as-checked').FIXTURE_CONSTRUCTION('set-in') });
+    const d = asChecked(['uniqlo-e475377-sweatshirt-us'], () => engine.compare(uniqloRef('M'), everStated, { includeUnverified: true }));
     assert.deepStrictEqual([d.status, d.recommended, d.dataStatus, d.withheld], ['partial', null, 'unverified', 'unverified']);
     assert.match(d.summary, /haven't been checked, so it isn't a recommendation/);
   }));
@@ -325,7 +330,7 @@ const diffs = (c, size) => Object.fromEntries(Object.entries(rowOf(c, size).dime
   out('\nvalidate(): can this be compared, before any size is scored\n');
 
   const sizingSchema2 = require('../api/_sizing/schema');
-  const measured = (m) => profileWith('hoodies', { brand: 'Carhartt', size: 'L', measurements: Object.assign({ unit: 'in' }, m) });
+  const measured = (m) => profileWith('hoodies', { brand: 'Carhartt', size: 'L', construction: 'set-in', measurements: Object.assign({ unit: 'in' }, m) });
   /* validate() and compare() agree: ready exactly when compare() compares */
   const agree = (v, c) => assert.strictEqual(v.ready, c.status !== 'insufficient', `validate ${v.status} vs compare ${c.status}`);
 
@@ -385,7 +390,9 @@ const diffs = (c, size) => Object.fromEntries(Object.entries(rowOf(c, size).dime
     assert.deepStrictEqual([v.status, v.ready, v.code, v.dimensions], ['missing-target', false, 'no-record', []]);
   });
 
-  await test('body-only: a record with only the body each size is cut for is never set beside a garment', () => {
+  await test('body-only: a record with only the body each size is cut for is never set beside a garment', () => asChecked(['nike-fn3859-club-pullover-fleece-hoodie-us'], () => {
+    /* Nike's body chart: unverified on disk (its automated audit was withdrawn), approved here in memory only */
+    assert.ok(!sizingSchema2.isVerified(require('../api/_sizing/records/nike-fn3859-club-pullover-fleece-hoodie-us.json')), 'unverified on disk');
     const nike = sizing.byId('nike-fn3859-club-pullover-fleece-hoodie-us');
     assert.ok(nike.charts.body && !nike.charts.garment && sizingSchema2.isVerified(nike), 'a verified record, body chart only');
     const v = engine.validate(measured({ chestWidth: 23.5 }), nike);
@@ -393,7 +400,7 @@ const diffs = (c, size) => Object.fromEntries(Object.entries(rowOf(c, size).dime
     assert.strictEqual(v.explanation, 'This chart measures the body, not the finished garment. Fynd cannot directly compare these measurements with your reference garment. No size recommendation is available from this chart alone.');
     assert.strictEqual(v.canRecommend, false);
     agree(v, engine.compare(measured({ chestWidth: 23.5 }), nike));
-  });
+  }));
 
   await test('methods: values whose method isn\'t stated, or measured differently, say which and why', () => asChecked(['uniqlo-e475377-sweatshirt-us', 'uniqlo-e475378-sweat-pullover-hoodie-us'], () => X.withFixtureBrand(() => {
     const unknown = engine.validate(uniqloRef('M'), X.asCheckedCopy(X.everlaneRecord(X.everlanePublished())));

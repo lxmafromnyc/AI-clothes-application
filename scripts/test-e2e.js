@@ -224,7 +224,10 @@ charts.setTransport(async (url) => {
    --------------------------------------------------------- */
 
 /* the UNIQLO pair, marked checked in memory for a test of the comparison on their real numbers */
-const { asChecked, UQ_PAIR } = require('./fixtures/as-checked');
+const { UQ_PAIR } = require('./fixtures/as-checked');
+/* UNIQLO and Zara don't say how their sleeves are attached; these tests' approved copies state set-in
+   as TEST FIXTURE data (fixtures/as-checked.js), and the shoppers' garments say set-in too */
+const asChecked = (ids, fn) => require('./fixtures/as-checked').asChecked(ids, fn, { construction: 'set-in' });
 const Schema = require('../assets/fit-profile-schema.js');
 const HANDLERS = {
   '/api/auth': require('../api/auth'),
@@ -1379,6 +1382,8 @@ const linkFromInbox = (pattern) => {
       /* the unit is chosen once, at the top, before the values are typed: switching after would convert them */
       await page.check(`input[name="ff-unit"][value="${g.measurements.unit}"]`);
       for (const [k, v] of Object.entries(g.measurements)) if (k !== 'unit') await page.fill(`#ffr-m-${k}`, String(v));
+      /* how its sleeves are attached: set-in unless the test says otherwise ('' is "Don't know") */
+      await page.selectOption('#ffr-construction', g.construction === undefined ? 'set-in' : g.construction);
     }
     await page.click('#ffr-use');
     await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit');
@@ -1403,6 +1408,8 @@ const linkFromInbox = (pattern) => {
       const how = (it.how && it.how[k]) || FORM_HOW[k];
       if (how) await page.selectOption(`#ffc-how-${k}`, how);
     }
+    /* how the item's sleeves are attached: set-in unless the test says otherwise ('' is "Don't know") */
+    await page.selectOption('#ffc-construction', it.construction === undefined ? 'set-in' : it.construction);
   };
   const compareByHand = async (page) => {
     await page.click('#ff-submit');
@@ -1480,7 +1487,7 @@ const linkFromInbox = (pattern) => {
     assert.ok(box.scroll <= 0, 'no sideways scroll');
     /* the item by hand, opened: the size and measurements; the brand and name folded as optional */
     const labels = await page.$$eval('#ffc-form label.profile-label', (ls) => ls.filter((l) => !l.closest('#ffc-more')).map((l) => l.textContent.replace(/\s+/g, ' ').trim()));
-    assert.deepStrictEqual(labels, ['Size', 'Chest width', 'How the chart measures it', 'Shoulder width', 'How the chart measures it', 'Body length', 'How the chart measures it', 'Sleeve length', 'How the chart measures it']);
+    assert.deepStrictEqual(labels, ['Size', 'Chest width', 'How the chart measures it', 'Shoulder width', 'How the chart measures it', 'Body length', 'How the chart measures it', 'Sleeve length', 'How the chart measures it', 'How the sleeves are attached']);
     assert.strictEqual(await page.$eval('#ffc-more', (d) => d.open), false);
     assert.match(await page.textContent('#ffc-more > summary'), /Brand and product name \(optional\)/);
     assert.deepStrictEqual(await page.$$eval('#ffc-form .measure-unit', (ns) => ns.map((n) => n.textContent)), ['', '', '', ''], 'no unit shown until one is chosen');
@@ -1518,6 +1525,14 @@ const linkFromInbox = (pattern) => {
 
   /* ---------- the redesigned flow: Fynd does the measuring ---------- */
   const ZARA_HOODIE = 'https://www.zara.com/us/en/basic-heavyweight-hoodie-p00761810.html';
+  /* UNIQLO's oversized hoodie: Fynd's unchecked copy of its chart measures the length and sleeve from the centre back and
+     the shoulders across their broadest part — none of which depends on how the sleeves are attached, which a chart read
+     from a page (a catalogue candidate) never takes from the shopper */
+  const UQ_OVERSIZED = 'https://www.uniqlo.com/us/en/products/E471808-000/00';
+  const OVERSIZED_SIZES = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', '3XL'];
+  /* a hoodie measured the form's way, and the three other ways too ("measure more"), as UNIQLO's M measures */
+  const MEASURED_EVERY_WAY = { brand: 'UNIQLO', size: 'L', construction: 'set-in', measurements: { unit: 'in', chestWidth: 24.75, bodyLength: 27, shoulderWidth: 22, sleeveLength: 25 }, methods: { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' },
+    alternates: [{ dimension: 'bodyLength', method: 'center-back-to-hem', value: 28.25 }, { dimension: 'sleeveLength', method: 'center-back-to-cuff', value: 34.75 }, { dimension: 'shoulderWidth', method: 'broadest-part-of-shoulders', value: 23.25 }] };
   const UQ_HOODIE_LINK = 'https://www.uniqlo.com/us/en/products/E475378-000/00';
   const SHOULDER_WAY = { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' };
   const itemFound = (page) => page.waitForSelector('#ffi-found[data-state]:not([data-state="loading"])');
@@ -1530,8 +1545,8 @@ const linkFromInbox = (pattern) => {
     const page = await signedIn(context, 'returning@e2e.test');
     const p = Schema.empty();
     p.garments = {
-      hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'L', measurements: { unit: 'cm', chestWidth: 63, bodyLength: 70.5, shoulderWidth: 54, sleeveLength: 65 }, methods: SHOULDER_WAY } }),
-      tshirts: Object.assign(Schema.emptyGarment('tshirts'), { favorite: 'perfect', anchor: { brand: 'Gap', size: 'M', measurements: { unit: 'in', chestWidth: 21, bodyLength: 28 }, methods: { registry: 1, chestWidth: SHOULDER_WAY.chestWidth, bodyLength: SHOULDER_WAY.bodyLength } } })
+      hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: MEASURED_EVERY_WAY }),
+      tshirts: Object.assign(Schema.emptyGarment('tshirts'), { favorite: 'perfect', anchor: { brand: 'Gap', size: 'M', construction: 'set-in', measurements: { unit: 'in', chestWidth: 21, bodyLength: 28 }, methods: { registry: 1, chestWidth: SHOULDER_WAY.chestWidth, bodyLength: SHOULDER_WAY.bodyLength } } })
     };
     await fitProfiles.save((await users.byEmail('returning@e2e.test')).id, p);
     const posted = [];
@@ -1540,13 +1555,13 @@ const linkFromInbox = (pattern) => {
     await page.waitForSelector('#ff-reference[data-state="saved"]');
     assert.strictEqual(await page.isVisible('#ffr-search'), false, 'a saved garment: no form to fill');
     assert.strictEqual((await page.textContent('.nav-links a[href="account.html"]')).trim(), 'Account', 'signed in: the header says Account');
-    await page.fill('#ffi-link', ZARA_HOODIE);
+    await page.fill('#ffi-link', UQ_OVERSIZED);
     await page.click('#ffi-link-go');
     await itemFound(page);
     /* found: the product, its sizes, Fynd's unchecked copy said so, the kind from its record — the one thing asked is the check */
     assert.strictEqual(await page.getAttribute('#ffi-found', 'data-state'), 'assisted');
-    assert.match(await page.textContent('#ffi-found .ffi-name'), /Zara · BASIC HEAVYWEIGHT HOODIE/);
-    assert.deepStrictEqual(await page.$$eval('#ffi-found .ffi-sizes li', (ls) => ls.map((l) => l.textContent)), ['S', 'M', 'L', 'XL', 'XXL']);
+    assert.match(await page.textContent('#ffi-found .ffi-name'), /UNIQLO · Sweat Oversized Pullover Hoodie/);
+    assert.deepStrictEqual(await page.$$eval('#ffi-found .ffi-sizes li', (ls) => ls.map((l) => l.textContent)), OVERSIZED_SIZES);
     assert.match(await page.textContent('#ffi-found .ffi-status'), /from its own copy of the product page — not yet checked by Fynd\. Check them against the chart/);
     assert.strictEqual(await page.$('#ffi-type'), null, 'the kind is not asked: Fynd’s record says it');
     /* the saved hoodie chosen for it; the T-shirt can't be */
@@ -1565,18 +1580,19 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(posted.length, 1);
     assert.deepStrictEqual(Object.keys(posted[0]).sort(), ['chart', 'referenceType']);
     assert.strictEqual(posted[0].referenceType, 'hoodies');
-    assert.deepStrictEqual(posted[0].chart.sizes.map((x) => x.size), ['S', 'M', 'L', 'XL', 'XXL']);
+    assert.deepStrictEqual(posted[0].chart.sizes.map((x) => x.size), OVERSIZED_SIZES);
+    assert.ok(!('construction' in posted[0].chart), 'no construction is sent for the product: the page doesn’t give one, and the shopper’s is for their own garment');
     assert.strictEqual(posted[0].chart.sizes[1].provenance.chestWidth.source, 'fynd-record');
     /* the result: the size, why, each measurement — and every size folded beneath it */
     assert.match(await page.textContent('#fit-compare'), /Fynd’s own copy of the product page, which you checked/);
-    assert.match(await page.textContent('#fit-compare .ff-every summary'), /Every size beside your garment \(5\)/);
-    assert.strictEqual(await page.$$eval('#fit-compare .ff-every tbody tr', (rs) => rs.length), 5);
+    assert.match(await page.textContent('#fit-compare .ff-every summary'), /Every size beside your garment \(8\)/);
+    assert.strictEqual(await page.$$eval('#fit-compare .ff-every tbody tr', (rs) => rs.length), 8);
     assert.deepStrictEqual(await lastEffort(page).then((x) => x.manualInputs), 2, 'the link and the check');
     /* after buying: how it fit, kept with this product's link, the size bought and the saved hoodie compared */
     assert.strictEqual(await page.isVisible('#ff-feedback summary'), true);
     await page.click('#ff-feedback summary');
     await page.waitForSelector('#ff-feedback form');
-    assert.deepStrictEqual(await page.$$eval('#ff-feedback select option', (ns) => ns.map((o) => o.value)), ['S', 'M', 'L', 'XL', 'XXL']);
+    assert.deepStrictEqual(await page.$$eval('#ff-feedback select option', (ns) => ns.map((o) => o.value)), OVERSIZED_SIZES);
     assert.strictEqual(await page.inputValue('#ff-feedback select'), 'M', 'the recommended size first');
     await page.check('#ff-feedback input[value="too-long"]');
     await page.check('#ff-feedback .fyf-consent input');
@@ -1586,11 +1602,11 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(kept.length, 1);
     assert.deepStrictEqual([kept[0].category, kept[0].sizeTried, kept[0].recommendedSize, kept[0].asExpected, kept[0].issues.join(), kept[0].referenceType, kept[0].reference.brand],
       ['hoodies', 'M', 'M', false, 'too-long', 'hoodies', 'UNIQLO']);
-    assert.ok(/^https:\/\/www\.zara\.com\//.test(kept[0].product.url), kept[0].product.url);
+    assert.ok(/^https:\/\/www\.uniqlo\.com\/us\/en\/products\/E471808/.test(kept[0].product.url), kept[0].product.url);
     await context.close();
   });
 
-  await test('a first-time guest: their hoodie’s measurements in the unit they choose, the product’s link and one tick — compared without pressing “Use this garment” or Compare, seven manual inputs in all, the garment kept for the visit', async () => {
+  await test('a first-time guest: their hoodie’s measurements in the unit they choose, the product’s link and one tick — compared without pressing “Use this garment” or Compare; the product’s chart measured other ways, the three alternates it asks for, then a size — the garment kept for the visit', async () => {
     const context = await openContext({ byHand: false });
     const page = await context.newPage();
     await open(page, 'index.html');
@@ -1601,15 +1617,23 @@ const linkFromInbox = (pattern) => {
     assert.deepStrictEqual(await page.$$eval('input[name="ff-unit"]', (rs) => rs.map((r) => r.checked)), [false, false]);
     await page.check('input[name="ff-unit"][value="cm"]');
     for (const [k, v] of Object.entries({ chestWidth: 63, shoulderWidth: 54, bodyLength: 70.5, sleeveLength: 65 })) await page.fill(`#ffr-m-${k}`, String(v));
-    await page.fill('#ffi-link', ZARA_HOODIE);
+    await page.selectOption('#ffr-construction', 'set-in');
+    await page.fill('#ffi-link', UQ_OVERSIZED);
     await page.click('#ffi-link-go');
     await itemFound(page);
     await page.check('#ffi-confirm');
     await resultDone(page);
+    /* UNIQLO measures the length and sleeve from the centre back and the shoulders across their broadest part: only the chest
+       is shared with the form's way, so Fynd asks for exactly those three — it never assumes how the sleeves are attached */
+    assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'too-few');
+    assert.strictEqual((await lastEffort(page)).manualInputs, 8, 'the unit, four measurements, how the garment’s sleeves are attached, the link, the tick');
+    assert.deepStrictEqual((await page.$$eval('#ff-measure-more input', (ns) => ns.map((i) => i.dataset.dimension))).sort(), ['bodyLength', 'shoulderWidth', 'sleeveLength']);
+    for (const [k, v] of Object.entries({ bodyLength: 71.8, sleeveLength: 88.3, shoulderWidth: 59.1 })) await page.fill(`#ff-more-${k}`, String(v));
+    await page.click('.ff-more-save');
+    await page.waitForSelector('#fit-compare[data-verdict="recommended"]');
     assert.strictEqual((await page.textContent('#fit-compare .fit-compare-recommended')).trim(), 'Recommended size: M');
     await page.waitForSelector('#ff-reference[data-visit="set"] .ff-ref--visit');
     assert.match(await page.textContent('.ff-ref--visit'), /Kept for this visit\. Not saved to an account\./);
-    assert.strictEqual((await lastEffort(page)).manualInputs, 7, 'the unit, four measurements, the link, the tick');
     /* "Bought it?" for a guest: says to sign in, asks nothing of the feedback endpoint */
     const fbAsked = [];
     page.on('request', (r) => { if (/fit-profile/.test(r.url())) fbAsked.push(r.url()); });
@@ -1830,7 +1854,7 @@ const linkFromInbox = (pattern) => {
   const UQ_CREW = 'https://www.uniqlo.com/us/en/products/E475377-000/00';
   const ZR_RELAXED = 'https://www.zara.com/us/en/basic-relaxed-fit-hoodie-p00761350.html';
   const ZR_HEAVY = 'https://www.zara.com/us/en/basic-heavyweight-hoodie-p00761810.html';
-  const UQ_OVERSIZED = 'https://www.uniqlo.com/us/en/products/E471808-000/00';
+  // UQ_OVERSIZED: declared with the link-flow tests above
   const ZARA_BOXY = 'https://www.zara.com/us/en/compact-boxy-fit-hoodie-p08054370.html';
   const ITEM_KEYS = ['brand', 'brandId', 'code', 'id', 'line', 'name', 'problem', 'savedAt', 'size', 'status', 'type', 'url', 'validatedAt'];
   const closetOf = (page) => page.evaluate((k) => JSON.parse(localStorage.getItem(k)), CLOSET_KEY);
@@ -2409,7 +2433,7 @@ const linkFromInbox = (pattern) => {
     const context = await openContext({ byHand: false });
     const page = await signedIn(context, 'counted@e2e.test');
     const p = Schema.empty();
-    p.garments = { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'L', measurements: { unit: 'cm', chestWidth: 63, bodyLength: 70.5, shoulderWidth: 54, sleeveLength: 65 }, methods: SHOULDER_WAY } }) };
+    p.garments = { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'L', construction: 'set-in', measurements: { unit: 'cm', chestWidth: 63, bodyLength: 70.5, shoulderWidth: 54, sleeveLength: 65 }, methods: SHOULDER_WAY } }) };
     await fitProfiles.save((await users.byEmail('counted@e2e.test')).id, p);
     await open(page, 'index.html');
     await page.waitForSelector('#ff-reference[data-state="saved"]');
@@ -2491,7 +2515,7 @@ const linkFromInbox = (pattern) => {
     const context = await openContext({ byHand: false });
     const page = await signedIn(context, 'centreback@e2e.test');
     const p = Schema.empty();
-    p.garments = { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', line: 'men', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'in', chestWidth: 23, shoulderWidth: 20, bodyLength: 27.5, sleeveLength: 25 }, methods: { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', shoulderWidth: 'seam-to-seam', bodyLength: 'high-point-shoulder-to-hem', sleeveLength: 'shoulder-seam-to-cuff' } } }) };
+    p.garments = { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', line: 'men', anchor: { brand: 'Carhartt', size: 'L', construction: 'set-in', measurements: { unit: 'in', chestWidth: 23, shoulderWidth: 20, bodyLength: 27.5, sleeveLength: 25 }, methods: { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', shoulderWidth: 'seam-to-seam', bodyLength: 'high-point-shoulder-to-hem', sleeveLength: 'shoulder-seam-to-cuff' } } }) };
     const { id } = await users.byEmail('centreback@e2e.test');
     await fitProfiles.save(id, p);
     await open(page, 'index.html');
@@ -2513,12 +2537,12 @@ const linkFromInbox = (pattern) => {
     const context = await openContext({ byHand: false });
     const page = await signedIn(context, 'phone-returning@e2e.test');
     const p = Schema.empty();
-    p.garments = { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'UNIQLO', size: 'L', measurements: { unit: 'cm', chestWidth: 63, bodyLength: 70.5, shoulderWidth: 54, sleeveLength: 65 }, methods: SHOULDER_WAY } }) };
+    p.garments = { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: MEASURED_EVERY_WAY }) };
     await fitProfiles.save((await users.byEmail('phone-returning@e2e.test')).id, p);
     await page.setViewportSize({ width: 360, height: 780 });
     await open(page, 'index.html');
     await page.waitForSelector('#ff-reference[data-state="saved"]');
-    await page.fill('#ffi-link', ZARA_HOODIE);
+    await page.fill('#ffi-link', UQ_OVERSIZED);
     await page.click('#ffi-link-go');
     await itemFound(page);
     await page.check('#ffi-confirm');
@@ -2586,7 +2610,7 @@ const linkFromInbox = (pattern) => {
     page.on('request', (r) => { if (r.url().includes('candidate=1')) sent = JSON.parse(r.postData() || 'null'); });
     await compareByHand(page);
     assert.strictEqual(byHandAsked(), before + 1, 'one request to the server');
-    assert.deepStrictEqual(sent.candidate, { type: 'hoodies', brand: 'AnyBrand', name: 'Heavy Hood', size: 'L', unit: 'cm', measurements: SAME_ITEM.measurements, methods: Object.assign({ registry: 1 }, FORM_HOW) });
+    assert.deepStrictEqual(sent.candidate, { type: 'hoodies', brand: 'AnyBrand', name: 'Heavy Hood', size: 'L', unit: 'cm', measurements: SAME_ITEM.measurements, methods: Object.assign({ registry: 1 }, FORM_HOW), construction: 'set-in' });
     assert.strictEqual(sent.reference.type, 'hoodies', 'the garment described here, in the body');
     assert.ok(!page.url().includes('58'), 'nothing in the address');
     assert.strictEqual(await page.getAttribute('#fit-compare', 'data-verdict'), 'recommended');
@@ -2765,6 +2789,7 @@ const linkFromInbox = (pattern) => {
     /* typed, not kept: a garment whose chest isn't a number doesn't read (its own measurements need no size) */
     await page.fill('#ffr-brand', 'Carhartt');
     for (const [k, v] of Object.entries({ chestWidth: 'wide', bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 })) await page.fill(`#ffr-m-${k}`, String(v));
+    await page.selectOption('#ffr-construction', 'set-in');
     assert.strictEqual(await page.getAttribute('#ff-submit', 'aria-disabled'), 'false', 'a garment being entered can be compared');
     const asked = byHandAsked();
     await page.click('#ff-submit');
@@ -2859,7 +2884,7 @@ const linkFromInbox = (pattern) => {
     assert.strictEqual(await page.isHidden('#fit-result'), true);
     /* an answer whose comparison names a size its decision doesn't give */
     await describe(page, MY_HOODIE);
-    const real = (await (await fetch(`${ORIGIN}/api/size-recommendation?compare=1&candidate=1`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN }, body: JSON.stringify({ candidate: Object.assign({}, SAME_ITEM, { methods: Object.assign({ registry: 1 }, FORM_HOW) }), reference: { type: 'hoodies', garment: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' } } } } }) })).json());
+    const real = (await (await fetch(`${ORIGIN}/api/size-recommendation?compare=1&candidate=1`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ORIGIN }, body: JSON.stringify({ candidate: Object.assign({}, SAME_ITEM, { methods: Object.assign({ registry: 1 }, FORM_HOW), construction: 'set-in' }), reference: { type: 'hoodies', garment: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', construction: 'set-in', measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' } } } } }) })).json());
     assert.deepStrictEqual([real.decision.outcome, real.comparison.recommended], ['OK', 'L']);
     const overruled = Object.assign({}, real, { decision: Object.assign({}, real.decision, { outcome: 'INSUFFICIENT_DATA', size: null, confidence: null, reasons: [{ code: 'missing-required-measurement', dim: 'chestWidth', side: 'target', required: true }], messages: ['Every comparison needs the chest width.'] }) });
     for (const body of [overruled, Object.assign({}, real, { decision: null }), Object.assign({}, real, { decision: Object.assign({}, real.decision, { outcome: 'OK', size: 'XXXL' }) })]) {
@@ -2877,7 +2902,7 @@ const linkFromInbox = (pattern) => {
     const context = await openContext();
     const page = await signedIn(context, 'mae@e2e.test');
     const user = await users.byEmail('mae@e2e.test');
-    await fitProfiles.saveGuide(user.id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' } } } } });
+    await fitProfiles.saveGuide(user.id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', construction: 'set-in', measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' } } } } });
     await open(page, 'index.html');
     await page.waitForSelector('#ff-reference[data-state="saved"]');
     assert.match(await page.textContent('#ff-reference'), /Carhartt/);
@@ -2928,7 +2953,8 @@ const linkFromInbox = (pattern) => {
   const UQ_HOODIE_L = byHandFrom('uniqlo-e475378-sweat-pullover-hoodie-us', 'L');
   const UQ_HOODIE_M = byHandFrom('uniqlo-e475378-sweat-pullover-hoodie-us', 'M');
   /* an item as the page sends it, and as the engine reads it */
-  const asCandidate = (it) => ({ type: it.type, brand: it.brand, name: it.name, size: it.size, unit: it.unit, measurements: it.measurements, methods: Object.assign({ registry: 1 }, it.how) });
+  /* with how its sleeves are attached, as enterItem answers it (set-in unless the item says otherwise) */
+  const asCandidate = (it) => Object.assign({ type: it.type, brand: it.brand, name: it.name, size: it.size, unit: it.unit, measurements: it.measurements, methods: Object.assign({ registry: 1 }, it.how) }, it.construction === '' ? {} : { construction: it.construction || 'set-in' });
   const candidateRecordOf = (it) => require('../api/_sizing/engine').candidateRecord(require('../assets/fit-candidate.js').readCandidate(asCandidate(it)).candidate);
   /* compared: the item entered (UNIQLO's hoodie in L by default), then Compare fit */
   const compareItem = async (page, item) => {
@@ -3117,7 +3143,7 @@ const linkFromInbox = (pattern) => {
   await test('signed in with a saved reference: Find Fit uses it as before — no form, no offer to save', async () => {
     const context = await openContext();
     const page = await signedIn(context, 'xia@e2e.test');
-    await fitProfiles.saveGuide((await users.byEmail('xia@e2e.test')).id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } } } });
+    await fitProfiles.saveGuide((await users.byEmail('xia@e2e.test')).id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', construction: 'set-in', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } } } });
     await open(page, 'index.html');
     await page.waitForSelector('#ff-reference[data-state="saved"] .ff-ref[data-kind="hoodies"]');
     assert.strictEqual(await page.$('#ff-reference .ffr-form'), null);
@@ -3758,7 +3784,7 @@ const linkFromInbox = (pattern) => {
     /* Compare: a measured reference the engine alone would call S, the decision NO_MATCH (the chest 7 cm narrower) */
     const zara = require('../api/_sizing/records').byId('zara-00761810-basic-heavyweight-hoodie-us');
     const s = zara.charts.garment.sizes.S;
-    await fitProfiles.saveGuide(user.id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: null, size: null, measurements: { unit: 'cm', chestWidth: String(s.chestWidth.value - 7), bodyLength: String(s.bodyLength.value), shoulderWidth: String(s.shoulderWidth.value), sleeveLength: String(s.sleeveLength.value) } } } } });
+    await fitProfiles.saveGuide(user.id, { garments: { hoodies: { favorite: 'perfect', anchor: { brand: null, size: null, construction: 'set-in', measurements: { unit: 'cm', chestWidth: String(s.chestWidth.value - 7), bodyLength: String(s.bodyLength.value), shoulderWidth: String(s.shoulderWidth.value), sleeveLength: String(s.sleeveLength.value) } } } } });
     await open(page, 'compare.html');
     await page.waitForSelector('#ref-saved:not([hidden])');
     await page.click(`[data-product="${zara.id}"]`);
@@ -3776,7 +3802,7 @@ const linkFromInbox = (pattern) => {
     const page = await signedIn(context, 'hugo@e2e.test');
     const user = await users.byEmail('hugo@e2e.test');
     await fitProfiles.saveGuide(user.id, { garments: {
-      hoodies: { favorite: 'perfect', fitGoal: 'oversized', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' } } },
+      hoodies: { favorite: 'perfect', fitGoal: 'oversized', anchor: { brand: 'Carhartt', size: 'L', construction: 'set-in', measurements: { unit: 'cm', chestWidth: '58', bodyLength: '68', shoulderWidth: '50', sleeveLength: '62' } } },
       jeans: { anchor: { brand: 'Levi’s', size: '32', length: '30' }, fitGoal: 'slim' }
     } });
     await listingsFor(page);
@@ -3914,6 +3940,41 @@ const linkFromInbox = (pattern) => {
     await context.close();
   });
 
+  await test('the fit profile asks how a saved garment’s sleeves are attached: an existing garment without an answer shows "Don’t know" and is saved without one; an answer is kept; "Don’t know" clears it — nothing filled in', async () => {
+    const context = await openContext();
+    const page = await signedIn(context, 'sleeves@e2e.test');
+    const user = await users.byEmail('sleeves@e2e.test');
+    /* a garment saved before the question existed: no construction */
+    const p = Schema.empty();
+    p.garments = { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } }) };
+    await fitProfiles.save(user.id, p);
+    assert.ok(!('construction' in (await savedProfile('sleeves@e2e.test')).garments.hoodies.anchor));
+    await open(page, 'fit-profile.html?for=hoodies');
+    await page.waitForSelector('#card-hoodies');
+    await page.evaluate(() => { document.querySelector('#card-hoodies [data-part="more"]').open = true; });
+    assert.deepStrictEqual(await page.$$eval('#g-hoodies-construction option', (os) => os.map((o) => [o.value, o.textContent])),
+      [['', 'Don’t know'], ['set-in', 'Set-in: a seam around the top of the arm'], ['raglan', 'Raglan: a seam from the underarm to the collar'], ['drop-shoulder', 'Dropped: the shoulder seam sits down the arm']]);
+    assert.strictEqual(await page.inputValue('#g-hoodies-construction'), '', 'unknown stays unknown: "Don’t know"');
+    assert.match(await page.textContent('#card-hoodies'), /compared only with a garment made the same way. Fynd doesn’t guess/);
+    /* saved as it is: still none — never a default */
+    await page.fill('#g-hoodies-notes', 'Roomy');
+    await saveAndWait(page);
+    assert.ok(!('construction' in (await savedProfile('sleeves@e2e.test')).garments.hoodies.anchor), 'saving without an answer adds none');
+    /* answered: kept, and shown again */
+    await page.selectOption('#g-hoodies-construction', 'raglan');
+    await saveAndWait(page);
+    assert.strictEqual((await savedProfile('sleeves@e2e.test')).garments.hoodies.anchor.construction, 'raglan');
+    await open(page, 'fit-profile.html?for=hoodies');
+    await page.waitForSelector('#card-hoodies');
+    assert.strictEqual(await page.inputValue('#g-hoodies-construction'), 'raglan');
+    assert.strictEqual(await page.evaluate(() => document.querySelector('#card-hoodies [data-part="more"]').open), true, 'opened: it holds an answer');
+    /* "Don't know" again: cleared, not kept from before */
+    await page.selectOption('#g-hoodies-construction', '');
+    await saveAndWait(page);
+    assert.ok(!('construction' in (await savedProfile('sleeves@e2e.test')).garments.hoodies.anchor), '"Don’t know" clears it');
+    await context.close();
+  });
+
   await test('a reference garment is added with its measurements, checked, replaced and removed on its card; Compare reads it and links there', () => asChecked(UQ_PAIR, async () => {
     const fitFeedback = require('../api/_fit-feedback');
     const context = await openContext();
@@ -3970,7 +4031,8 @@ const linkFromInbox = (pattern) => {
     assert.match(await page.textContent('#ref-saved-list'), /Chest, flat\s*58 cm/);
     assert.strictEqual(await page.getAttribute('#ref-edit', 'href'), 'fit-profile.html?for=hoodies');
     await page.click('[data-product="uniqlo-e475378-sweat-pullover-hoodie-us"]');
-    await page.waitForFunction(() => /Only chest and shoulders are measured the same way/.test(document.querySelector('#result-summary').textContent));
+    /* the fit profile page doesn't ask how the sleeves are attached, so the seam-to-seam shoulders aren't compared either */
+    await page.waitForFunction(() => /Only chest is measured the same way/.test(document.querySelector('#result-summary').textContent));
     assert.strictEqual(await page.isVisible('#result-table-wrap'), false, 'too few measured alike: no size table');
     assert.strictEqual(await page.locator('.compare-tag').count(), 0, 'neither "Recommended" nor "Closest" from too little');
     await page.click('[data-product="zara-00761810-basic-heavyweight-hoodie-us"]');
@@ -3979,7 +4041,7 @@ const linkFromInbox = (pattern) => {
 
     /* fit feedback, still on Compare, against the reference — once its answer is in, which redraws the form */
     await page.click('[data-product="uniqlo-e475378-sweat-pullover-hoodie-us"]');
-    await page.waitForFunction(() => /Only chest and shoulders are measured the same way/.test(document.querySelector('#result-summary').textContent));
+    await page.waitForFunction(() => /Only chest is measured the same way/.test(document.querySelector('#result-summary').textContent));
     await page.waitForSelector('#feedback-section:not([hidden])');
     await page.selectOption('#fb-size', 'M');
     await page.check('input[name="fbExpected"][value="yes"]');
@@ -4018,7 +4080,7 @@ const linkFromInbox = (pattern) => {
     /* as version 5 stored it: three of four values measured on the form, no methods; a sweatshirt by label alone */
     const measurements = { unit: 'cm', chestWidth: 58, bodyLength: 68, sleeveLength: 62, shoulderWidth: null };
     await store.set(fitProfiles.profileKey(user.id), Object.assign(Schema.empty(), { schemaVersion: 5, garments: {
-      hoodies: { favorite: 'perfect', line: null, anchor: { brand: 'Carhartt', size: 'L', measurements: Object.assign({}, measurements) } },
+      hoodies: { favorite: 'perfect', line: null, anchor: { brand: 'Carhartt', size: 'L', construction: 'set-in', measurements: Object.assign({}, measurements) } },
       sweatshirts: { favorite: 'perfect', line: null, anchor: { brand: 'UNIQLO', size: 'S' } }
     } }));
     /* the version 5 form measured each value one way: that method, named, for exactly the values held */

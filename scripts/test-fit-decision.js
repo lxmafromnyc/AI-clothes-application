@@ -30,7 +30,7 @@ const Schema = require('../assets/fit-profile-schema.js');
 const sizing = require('../api/_sizing/records');
 const engine = require('../api/_sizing/engine');
 const decision = require('../api/_sizing/decision');
-const { asChecked } = require('./fixtures/as-checked');
+const { asChecked, approvedCopy, FIXTURE_CONSTRUCTION } = require('./fixtures/as-checked');
 
 const out = (text) => process.stdout.write(text);
 let passed = 0;
@@ -53,6 +53,15 @@ const UQ_HOODIE = 'uniqlo-e475378-sweat-pullover-hoodie-us';
 const codes = (d) => d.reasons.map((r) => r.code);
 const qualifierCodes = (d) => d.qualifiers.map((r) => r.code);
 const copy = (record) => JSON.parse(JSON.stringify(record));
+/* a record edited for a test, then approved as edited — in this test's memory only (an
+   approval is bound to a record's content: fixtures/as-checked.js approvedCopy) */
+const edited = (record, edit) => { const r = copy(record); edit(r); return approvedCopy(r, SET_IN); };
+/* Zara doesn't say how its sleeves are attached; a test whose subject needs its seam measurements
+   compared states set-in as TEST FIXTURE data (fixtures/as-checked.js), never as Zara's word */
+const SET_IN = { construction: 'set-in' };
+/* the body-chart records whose automated verification was withdrawn: a test of the policy
+   on their published charts approves them in its own memory */
+const BODY_CHARTS = [NIKE, 'carhartt-k121-loose-fit-midweight-hoodie-us'];
 
 /* a body chest, a men's hoodie, true to size */
 function chestProfile(chest, unit, extra) {
@@ -65,7 +74,8 @@ function chestProfile(chest, unit, extra) {
    profile's own methods (fit-profile-schema GARMENT_MEASURES) */
 function referenceProfile(measurements, unit, category) {
   return Object.assign(Schema.empty(), {
-    garments: { [category || 'hoodies']: { line: 'men', fitGoal: 'true-to-size', favorite: 'perfect', anchor: { brand: 'Zara', size: 'M', measurements: Object.assign({ unit: unit || 'cm' }, measurements) } } }
+    /* the shopper says its sleeves are set-in: without that, its seam measurements are never compared */
+    garments: { [category || 'hoodies']: { line: 'men', fitGoal: 'true-to-size', favorite: 'perfect', anchor: { brand: 'Zara', size: 'M', construction: 'set-in', measurements: Object.assign({ unit: unit || 'cm' }, measurements) } } }
   });
 }
 /* one size's published garment measurements, as plain numbers */
@@ -95,7 +105,7 @@ function holdsContract(d) {
 
   /* ---------- 1. outside the supported size range ---------- */
 
-  await test('1  Nike, chest 24.5 in (XXS is 28.5–31.5): NO_MATCH "outside-size-range", below the smallest — never a recommendation', () => {
+  await test('1  Nike, chest 24.5 in (XXS is 28.5–31.5): NO_MATCH "outside-size-range", below the smallest — never a recommendation', () => asChecked(BODY_CHARTS, () => {
     const nike = sizing.byId(NIKE);
     /* the engine alone still ranks a closest size, as it always has */
     assert.strictEqual(engine.recommend(chestProfile(24.5), nike).status, 'ok');
@@ -105,24 +115,24 @@ function holdsContract(d) {
     assert.deepStrictEqual(codes(d), ['outside-size-range']);
     assert.strictEqual(d.reasons[0].side, 'below-smallest');
     assert.deepStrictEqual([d.size, d.closest, d.method], [null, 'XXS', 'body-chart']);
-  });
+  }));
 
-  await test('1  Nike, chest 66 in (4XL is 58–63): NO_MATCH, above the largest', () => {
+  await test('1  Nike, chest 66 in (4XL is 58–63): NO_MATCH, above the largest', () => asChecked(BODY_CHARTS, () => {
     const d = decision.decide(chestProfile(66), sizing.byId(NIKE));
     holdsContract(d);
     assert.strictEqual(d.outcome, NO_MATCH);
     assert.strictEqual(d.reasons[0].code, 'outside-size-range');
     assert.strictEqual(d.reasons[0].side, 'above-largest');
     assert.strictEqual(d.closest, '4XL');
-  });
+  }));
 
-  await test('1  the same in centimetres: 62 cm (24.4 in) is beyond XXS too', () => {
+  await test('1  the same in centimetres: 62 cm (24.4 in) is beyond XXS too', () => asChecked(BODY_CHARTS, () => {
     const d = decision.decide(chestProfile(62, 'cm'), sizing.byId(NIKE));
     assert.strictEqual(d.outcome, NO_MATCH);
     assert.strictEqual(d.reasons[0].code, 'outside-size-range');
-  });
+  }));
 
-  await test('1  the search listings say "no-match" with no size for the out-of-range shopper, and carry the decision', () => {
+  await test('1  the search listings say "no-match" with no size for the out-of-range shopper, and carry the decision', () => asChecked(BODY_CHARTS, () => {
     const { fitFor } = require('../api/size-recommendation');
     const nike = sizing.byId(NIKE);
     const fit = fitFor(chestProfile(66), 'hoodies', [{ brand: 'Nike', name: nike.product.name, url: nike.product.url }]);
@@ -131,13 +141,13 @@ function holdsContract(d) {
     assert.deepStrictEqual([item.status, item.size, item.closest], ['no-match', null, '4XL']);
     assert.strictEqual(item.decision.outcome, NO_MATCH);
     assert.ok(item.missing.length && typeof item.missing[0] === 'string');
-  });
+  }));
 
   /* ---------- 1b. chart eligibility apart from the fit preference ---------- */
 
   const CARHARTT = 'carhartt-k121-loose-fit-midweight-hoodie-us';
 
-  await test('1b Carhartt (one chest value per size: XS 32, S 36…), chest 30 in, true to size: OK XS at low confidence — the "loose fit" shift no longer rules out the size the chart covers', () => {
+  await test('1b Carhartt (one chest value per size: XS 32, S 36…), chest 30 in, true to size: OK XS at low confidence — the "loose fit" shift no longer rules out the size the chart covers', () => asChecked(BODY_CHARTS, () => {
     const carhartt = sizing.byId(CARHARTT);
     /* the fit preference scores XS against S's range (34–38), which the shopper doesn't reach */
     const r = engine.recommend(chestProfile(30), carhartt);
@@ -151,9 +161,9 @@ function holdsContract(d) {
     /* the estimate is kept: XS reaches 30 in only through its mirrored half, below the published 32 */
     const est = d.qualifiers.find((q) => q.code === 'estimated-chart-range');
     assert.deepStrictEqual(est, { code: 'estimated-chart-range', sizes: ['XS'], mirroredEdge: { size: 'XS', published: 32, side: 'below' } });
-  });
+  }));
 
-  await test('1b a listing shows the decision\'s confidence: low where the size rests on a mirrored chart edge, even if the engine said more', () => {
+  await test('1b a listing shows the decision\'s confidence: low where the size rests on a mirrored chart edge, even if the engine said more', () => asChecked(BODY_CHARTS, () => {
     const { fitFor } = require('../api/size-recommendation');
     const carhartt = sizing.byId(CARHARTT);
     const item = { brand: 'Carhartt', name: carhartt.product.name, url: carhartt.product.url };
@@ -163,18 +173,18 @@ function holdsContract(d) {
     const it = fitFor(profile, 'hoodies', [item]).items[0];
     /* a body estimate, its own result type: the estimated size apart from `size` */
     assert.deepStrictEqual([it.status, it.resultType, it.size, it.estimate, it.reliability, it.decision.confidence], ['estimate', 'body-estimate', null, 'XS', 'low', 'low']);
-  });
+  }));
 
-  await test('1b Carhartt, chest 29 in or 24.5 in: still NO_MATCH — beyond even the estimated XS range', () => {
+  await test('1b Carhartt, chest 29 in or 24.5 in: still NO_MATCH — beyond even the estimated XS range', () => asChecked(BODY_CHARTS, () => {
     [29, 24.5].forEach((c) => {
       const d = decision.decide(chestProfile(c), sizing.byId(CARHARTT));
       holdsContract(d);
       assert.deepStrictEqual([d.outcome, d.closest, codes(d)], [NO_MATCH, 'XS', ['outside-size-range']], String(c));
       assert.deepStrictEqual([d.reasons[0].side, d.reasons[0].chart.estimated], ['below-smallest', true]);
     });
-  });
+  }));
 
-  await test('1b Carhartt, chest 39 in: OK S, the shift reported apart from eligibility — the chart puts them in M, offered as the alternative', () => {
+  await test('1b Carhartt, chest 39 in: OK S, the shift reported apart from eligibility — the chart puts them in M, offered as the alternative', () => asChecked(BODY_CHARTS, () => {
     const d = decision.decide(chestProfile(39), sizing.byId(CARHARTT));
     holdsContract(d);
     assert.deepStrictEqual([d.outcome, d.size, d.alternative], [OK, 'S', 'M']);
@@ -183,9 +193,9 @@ function holdsContract(d) {
     /* an interior estimated range is said, without the mirrored-edge cap */
     const est = d.qualifiers.find((q) => q.code === 'estimated-chart-range');
     assert.ok(est && !est.mirroredEdge);
-  });
+  }));
 
-  await test('1b Nike ("Standard fit"), chest 60.5 in, oversized: OK 4XL — a size-up preference with no larger size never eliminates the 4XL the chart covers; 66 in is still NO_MATCH', () => {
+  await test('1b Nike ("Standard fit"), chest 60.5 in, oversized: OK 4XL — a size-up preference with no larger size never eliminates the 4XL the chart covers; 66 in is still NO_MATCH', () => asChecked(BODY_CHARTS, () => {
     const nike = sizing.byId(NIKE);
     const oversized = (c) => chestProfile(c, 'in', { fitGoal: 'oversized' });
     assert.strictEqual(engine.sizeOffset(nike, 'oversized'), 1);
@@ -199,13 +209,13 @@ function holdsContract(d) {
     assert.ok(!d.qualifiers.some((q) => q.code === 'estimated-chart-range'));
     const beyond = decision.decide(oversized(66), nike);
     assert.deepStrictEqual([beyond.outcome, beyond.closest, codes(beyond)], [NO_MATCH, '4XL', ['outside-size-range']]);
-  });
+  }));
 
   /* ---------- 1c. what a shopper reads ---------- */
 
   const DEVELOPER_WORDS = /\b(shopper|engine|policy|reason code|fitBands|tolerance|evidence|record)\b|`/i;
 
-  await test('1c a NO_MATCH listing reads as a shopper\'s sentence, chosen from the reason code: the brand, the size, which side', () => {
+  await test('1c a NO_MATCH listing reads as a shopper\'s sentence, chosen from the reason code: the brand, the size, which side', () => asChecked(BODY_CHARTS, () => {
     const { fitFor } = require('../api/size-recommendation');
     const nike = sizing.byId(NIKE);
     const item = (c) => fitFor(chestProfile(c), 'hoodies', [{ brand: 'Nike', name: nike.product.name, url: nike.product.url }]).items[0];
@@ -219,7 +229,7 @@ function holdsContract(d) {
       assert.deepStrictEqual(x.missing, decision.customerMessages(x.decision, { brand: 'Nike' }));
       assert.strictEqual(x.decision.reasons[0].code, 'outside-size-range');
     });
-  });
+  }));
 
   await test('1c each NO_MATCH code has its own customer wording, by its data: roomier or tighter, against a fit or a garment', () => {
     const say = (r) => decision.customerMessage(r, { brand: 'Zara' });
@@ -242,10 +252,10 @@ function holdsContract(d) {
       const S = rowOf(zara, 'S');
       const d = decision.decide(referenceProfile(Object.assign({}, S, { chestWidth: S.chestWidth - 10 })), zara);
       assert.deepStrictEqual(decision.customerMessages(d, { brand: 'Zara' }), ['Even the closest size, size S, would be much roomier through the chest than the garment you compared it with, so Fynd isn’t suggesting a size for this product.']);
-    });
+    }, SET_IN);
   });
 
-  await test('1c an INSUFFICIENT_DATA listing the policy alone found (a conflict) is in a shopper\'s words too', () => {
+  await test('1c an INSUFFICIENT_DATA listing the policy alone found (a conflict) is in a shopper\'s words too', () => asChecked(BODY_CHARTS, () => {
     const { fitFor } = require('../api/size-recommendation');
     const nike = sizing.byId(NIKE);
     const profile = Object.assign(chestProfile(34), { brandSizes: [{ brand: 'Nike', size: 'XL', category: 'hoodies', fit: 'about-right' }] });
@@ -254,22 +264,21 @@ function holdsContract(d) {
     assert.strictEqual(it.missing[0], 'Your chest measurement and the sizes you said fit you point to different sizes. Check them on your fit profile, and Fynd can suggest a size once they agree.');
     /* the developer's description of the code is never what a shopper reads */
     Object.values(decision.REASONS).forEach((r) => assert.ok(!it.missing.includes(r.about), r.about));
-  });
+  }));
 
-  await test('1  a measurement outside the range Fynd accepts at all (chest 80 in) is INSUFFICIENT_DATA, not a size', () => {
+  await test('1  a measurement outside the range Fynd accepts at all (chest 80 in) is INSUFFICIENT_DATA, not a size', () => asChecked(BODY_CHARTS, () => {
     const d = decision.decide(chestProfile(80), sizing.byId(NIKE));
     holdsContract(d);
     assert.strictEqual(d.outcome, INSUFFICIENT_DATA);
     assert.strictEqual(d.reasons[0].code, 'measurement-out-of-supported-range');
     assert.deepStrictEqual(d.reasons[0].range, Schema.rangeOf('chest', 'in'));
-  });
+  }));
 
   /* ---------- 2. a missing required measurement never ranks higher ---------- */
 
   await test('2  Zara: L without its length, reference 8 cm shorter than L — L is left out, never ranked first on less data', () => {
     asChecked([ZARA], () => {
-      const zara = copy(sizing.byId(ZARA));
-      delete zara.charts.garment.sizes.L.bodyLength;
+      const zara = edited(sizing.byId(ZARA), (z) => { delete z.charts.garment.sizes.L.bodyLength; });
       const L = rowOf(zara, 'L');
       const lengthL = sizing.byId(ZARA).charts.garment.sizes.L.bodyLength.value;
       const profile = referenceProfile({ chestWidth: L.chestWidth, shoulderWidth: L.shoulderWidth, sleeveLength: L.sleeveLength, bodyLength: lengthL - 8 });
@@ -284,13 +293,12 @@ function holdsContract(d) {
       assert.notStrictEqual(d.size, 'L');
       assert.notStrictEqual(d.closest, 'L');
       assert.ok(d.qualifiers.some((q) => q.code === 'sizes-excluded-incomplete' && q.sizes.includes('L')));
-    });
+    }, SET_IN);
   });
 
   await test('2  every size missing a measurement the chart declares and the reference shares: INSUFFICIENT_DATA "incomplete-size-rows", from both methods', () => {
     asChecked([ZARA], () => {
-      const zara = copy(sizing.byId(ZARA));
-      zara.sizes.forEach((s) => { delete zara.charts.garment.sizes[s].sleeveLength; });
+      const zara = edited(sizing.byId(ZARA), (z) => { z.sizes.forEach((s) => { delete z.charts.garment.sizes[s].sleeveLength; }); });
       const profile = referenceProfile(rowOf(sizing.byId(ZARA), 'M'));
       /* neither method ranks a size on less than it compares the others on */
       assert.deepStrictEqual(engine.recommend(profile, zara).missing.map((m) => m.code), ['no-candidates']);
@@ -300,13 +308,12 @@ function holdsContract(d) {
       holdsContract(d);
       assert.deepStrictEqual([d.outcome, codes(d)], [INSUFFICIENT_DATA, ['incomplete-size-rows']]);
       assert.deepStrictEqual(d.reasons[0].sizes, zara.sizes);
-    });
+    }, SET_IN);
   });
 
   await test('2  "sleeves run short" on a product missing one size\'s sleeve: the optional length is set aside for every size, said in the notes', () => {
     asChecked([UQ_HOODIE], () => {
-      const uq = copy(sizing.byId(UQ_HOODIE));
-      delete uq.charts.garment.sizes.XL.sleeveLength;
+      const uq = edited(sizing.byId(UQ_HOODIE), (u) => { delete u.charts.garment.sizes.XL.sleeveLength; });
       const plain = engine.recommend(chestProfile(40), uq);
       const short = engine.recommend(chestProfile(40, 'in', { troubleZones: ['sleeves-short'] }), uq);
       assert.strictEqual(short.status, 'ok');
@@ -331,16 +338,17 @@ function holdsContract(d) {
 
   await test('3  the one stated conversion is kept: a flat reference chest against a chart all the way around is compared, and called estimated', () => {
     asChecked([ZARA], () => {
-      const zara = copy(sizing.byId(ZARA));
-      const dim = zara.charts.garment.dimensions.chestWidth;
-      dim.method = 'garment-circumference';
-      delete dim.derivedCircumference;
-      zara.sizes.forEach((s) => { const c = zara.charts.garment.sizes[s].chestWidth; c.value *= 2; c.text = String(c.value); });
+      const zara = edited(sizing.byId(ZARA), (z) => {
+        const dim = z.charts.garment.dimensions.chestWidth;
+        dim.method = 'garment-circumference';
+        delete dim.derivedCircumference;
+        z.sizes.forEach((s) => { const c = z.charts.garment.sizes[s].chestWidth; c.value *= 2; c.text = String(c.value); });
+      });
       const d = decision.decide(referenceProfile(rowOf(sizing.byId(ZARA), 'M')), zara);
       holdsContract(d);
       assert.deepStrictEqual([d.outcome, d.size], [OK, 'M']);
       assert.ok(d.qualifiers.some((q) => q.code === 'estimated-conversion'));
-    });
+    }, SET_IN);
   });
 
   /* ---------- 4. units not stated ---------- */
@@ -364,15 +372,17 @@ function holdsContract(d) {
       const d = decision.decide(profile, sizing.byId(ZARA));
       holdsContract(d);
       assert.deepStrictEqual([d.outcome, codes(d)], [INSUFFICIENT_DATA, ['invalid-measurement']]);
-    });
+    }, SET_IN);
   });
 
   /* ---------- 5. unverified data ---------- */
 
   await test('5  Zara as it is (pending review): a perfect reference still gives INSUFFICIENT_DATA "unverified-data"', () => {
     const zara = sizing.byId(ZARA);
-    /* the evaluation suite's reading would rank it; the policy never does */
-    assert.strictEqual(engine.compare(referenceProfile(rowOf(zara, 'M')), zara, { includeUnverified: true }).closest, 'M');
+    /* the evaluation suite's reading would rank it (its sleeves stated set-in as test data, so its seam
+       measurements count); the policy never does */
+    const stated = Object.assign(copy(zara), { construction: FIXTURE_CONSTRUCTION('set-in') });
+    assert.strictEqual(engine.compare(referenceProfile(rowOf(zara, 'M')), stated, { includeUnverified: true }).closest, 'M');
     const d = decision.decide(referenceProfile(rowOf(zara, 'M')), zara);
     holdsContract(d);
     assert.deepStrictEqual([d.outcome, codes(d)], [INSUFFICIENT_DATA, ['unverified-data']]);
@@ -390,7 +400,7 @@ function holdsContract(d) {
 
   /* ---------- 6. conflicting references ---------- */
 
-  await test('6  a 34 in chest beside "Nike XL fits me" (44–48.5 in): INSUFFICIENT_DATA "conflicting-references" — the engine alone answered at low confidence', () => {
+  await test('6  a 34 in chest beside "Nike XL fits me" (44–48.5 in): INSUFFICIENT_DATA "conflicting-references" — the engine alone answered at low confidence', () => asChecked(BODY_CHARTS, () => {
     const nike = sizing.byId(NIKE);
     const profile = Object.assign(chestProfile(34), { brandSizes: [{ brand: 'Nike', size: 'XL', category: 'hoodies', fit: 'about-right' }] });
     const r = engine.recommend(profile, nike);
@@ -398,7 +408,7 @@ function holdsContract(d) {
     const d = decision.decide(profile, nike);
     holdsContract(d);
     assert.deepStrictEqual([d.outcome, codes(d)], [INSUFFICIENT_DATA, ['conflicting-references']]);
-  });
+  }));
 
   /* ---------- 7. requirements by category and method ---------- */
 
@@ -423,14 +433,14 @@ function holdsContract(d) {
       holdsContract(d);
       assert.strictEqual(d.outcome, INSUFFICIENT_DATA);
       assert.ok(d.reasons.some((r) => r.code === 'missing-required-measurement' && r.dim === 'chestWidth'), JSON.stringify(d.reasons));
-    });
+    }, SET_IN);
   });
 
-  await test('7  the answer says what its method required, for its category', () => {
+  await test('7  the answer says what its method required, for its category', () => asChecked(BODY_CHARTS, () => {
     const d = decision.decide(chestProfile(39), sizing.byId(NIKE));
     assert.strictEqual(d.method, 'body-chart');
     assert.deepStrictEqual(d.requirements, decision.REQUIREMENTS.hoodies['body-chart']);
-  });
+  }));
 
   /* ---------- 8. complete but unacceptable: NO_MATCH ---------- */
 
@@ -447,18 +457,24 @@ function holdsContract(d) {
       assert.strictEqual(d.reasons[0].code, 'chest-outside-acceptable-range');
       /* 10 cm flat is about 7.9 in around: past the engine's 3 in "slightly" band */
       assert.ok(Math.abs(d.reasons[0].differenceAroundIn - 7.87) < 0.01, d.reasons[0].differenceAroundIn);
-    });
+    }, SET_IN);
   });
 
   /* W1: every compared measurement of the closest size, not just the chest, is held to the
      engine's own reference band for it (fitBands.reference[dim].slight: length and sleeves
      1½ in, shoulders 1 in) — no new threshold */
-  const OWN = { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', sleeveLength: 'shoulder-seam-to-cuff', shoulderWidth: 'seam-to-seam' };
+  /* the bands are per dimension, whatever the method; both garments measure the sleeve from the centre back and the
+     shoulders across their broadest part, so no measurement depends on how the sleeves are attached — a chart (a
+     catalogue candidate) never takes the shopper's answer for that */
+  const OWN = { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', sleeveLength: 'center-back-to-cuff', shoulderWidth: 'broadest-part-of-shoulders' };
+  /* the shopper's own hoodie, measured by those same methods (saved with it) */
+  const wRef = (measurements, unit) => { const p = referenceProfile(measurements, unit); p.garments.hoodies.anchor.methods = OWN; delete p.garments.hoodies.anchor.construction; return p; };
   const REF_IN = { chestWidth: 22, bodyLength: 27, sleeveLength: 24, shoulderWidth: 20 };
+  /* the shopper says the item's sleeves are set-in, as their reference's are */
   const entered = (sizes, unit, methods) => engine.candidateRecord({ type: 'hoodies', brand: 'Example', unit: unit || 'in', methods: methods || OWN, sizes });
 
   await test('8  W1: chest exact, body 2½ in and sleeves 3 in too short — compare() still ranks M first; the decision is NO_MATCH, each miss said', () => {
-    const profile = referenceProfile(REF_IN, 'in');
+    const profile = wRef(REF_IN, 'in');
     const one = entered([{ size: 'M', measurements: { chestWidth: 22, bodyLength: 24.5, sleeveLength: 21, shoulderWidth: 20 } }]);
     const c = engine.compare(profile, one);
     /* the engine's ranking and status are unchanged: only the decision's acceptance */
@@ -484,7 +500,7 @@ function holdsContract(d) {
   });
 
   await test('8  W1: a size inside every band keeps its answer — OK, up to and including the band\'s own edge', () => {
-    const profile = referenceProfile(REF_IN, 'in');
+    const profile = wRef(REF_IN, 'in');
     /* length and sleeves past their tolerance (trade-offs), inside 1½ in; shoulders exactly at 1 in */
     const inside = entered([{ size: 'M', measurements: { chestWidth: 22.5, bodyLength: 25.5, sleeveLength: 25.5, shoulderWidth: 21 } }]);
     const d = decision.decide(profile, inside);
@@ -501,7 +517,7 @@ function holdsContract(d) {
   });
 
   await test('8  W1: a measurement not compared (method not stated, or another method) is never held to a band — the existing rules decide', () => {
-    const profile = referenceProfile(REF_IN, 'in');
+    const profile = wRef(REF_IN, 'in');
     const short = { chestWidth: 22, bodyLength: 27, sleeveLength: 21, shoulderWidth: 20 };
     /* sleeves 3 in short, but by a method not stated: left out, three still compared — OK */
     const unstated = decision.decide(profile, entered([{ size: 'M', measurements: short }], 'in', Object.assign({}, OWN, { sleeveLength: 'not-stated' })));
@@ -509,7 +525,7 @@ function holdsContract(d) {
     assert.deepStrictEqual([unstated.outcome, unstated.size], [OK, 'M']);
     assert.ok(unstated.qualifiers.some((q) => q.code === 'optional-measurement-not-compared' && q.dim === 'sleeveLength'));
     /* from the centre back on the chart, from the seam on the reference: incompatible, not compared */
-    const other = decision.decide(profile, entered([{ size: 'M', measurements: Object.assign({}, short, { sleeveLength: 30 }) }], 'in', Object.assign({}, OWN, { sleeveLength: 'center-back-to-cuff' })));
+    const other = decision.decide(profile, entered([{ size: 'M', measurements: Object.assign({}, short, { sleeveLength: 30 }) }], 'in', Object.assign({}, OWN, { sleeveLength: 'shoulder-seam-to-cuff' })));
     assert.deepStrictEqual([other.outcome, other.size], [OK, 'M']);
     /* too few compared: INSUFFICIENT_DATA as before, never NO_MATCH from a band */
     const few = decision.decide(profile, entered([{ size: 'M', measurements: { chestWidth: 22, bodyLength: 20 } }]));
@@ -529,12 +545,12 @@ function holdsContract(d) {
       const item = Object.assign({}, REF_IN, { [d]: REF_IN[d] + sign * (edge + past) });
       const label = `${d} ${sign > 0 ? '+' : '-'}${edge + past}`;
       const setups = {
-        'in, shown in': [referenceProfile(REF_IN, 'in'), entered([{ size: 'M', measurements: item }]), {}],
-        'in, shown cm': [referenceProfile(REF_IN, 'in'), entered([{ size: 'M', measurements: item }]), { unit: 'cm' }],
-        'cm, shown cm': [referenceProfile(toCm(REF_IN), 'cm'), entered([{ size: 'M', measurements: toCm(item) }], 'cm'), {}],
-        'cm, shown in': [referenceProfile(toCm(REF_IN), 'cm'), entered([{ size: 'M', measurements: toCm(item) }], 'cm'), { unit: 'in' }],
-        'reference in, item cm': [referenceProfile(REF_IN, 'in'), entered([{ size: 'M', measurements: toCm(item) }], 'cm'), {}],
-        'reference cm, item in': [referenceProfile(toCm(REF_IN), 'cm'), entered([{ size: 'M', measurements: item }]), {}]
+        'in, shown in': [wRef(REF_IN, 'in'), entered([{ size: 'M', measurements: item }]), {}],
+        'in, shown cm': [wRef(REF_IN, 'in'), entered([{ size: 'M', measurements: item }]), { unit: 'cm' }],
+        'cm, shown cm': [wRef(toCm(REF_IN), 'cm'), entered([{ size: 'M', measurements: toCm(item) }], 'cm'), {}],
+        'cm, shown in': [wRef(toCm(REF_IN), 'cm'), entered([{ size: 'M', measurements: toCm(item) }], 'cm'), { unit: 'in' }],
+        'reference in, item cm': [wRef(REF_IN, 'in'), entered([{ size: 'M', measurements: toCm(item) }], 'cm'), {}],
+        'reference cm, item in': [wRef(toCm(REF_IN), 'cm'), entered([{ size: 'M', measurements: item }]), {}]
       };
       Object.entries(setups).forEach(([how, [profile, record, opts]]) => {
         const d1 = decision.decide(profile, record, opts);
@@ -547,7 +563,7 @@ function holdsContract(d) {
     /* a chest the item publishes all the way around: the reference's flat width × 2 (the stated
        conversion), the same 3 in band around — at the edge, and 0.006 in around past it */
     const around = (v) => entered([{ size: 'M', measurements: Object.assign({}, REF_IN, { chestWidth: v }) }], 'in', Object.assign({}, OWN, { chestWidth: 'garment-circumference' }));
-    const profile = referenceProfile(REF_IN, 'in');
+    const profile = wRef(REF_IN, 'in');
     [[47, OK], [41, OK], [47.006, NO_MATCH], [40.994, NO_MATCH]].forEach(([v, expected]) => ['in', 'cm'].forEach((unit) => {
       assert.strictEqual(decision.decide(profile, around(v), { unit }).outcome, expected, `chest ${v} around, shown ${unit}`);
     }));
@@ -567,7 +583,7 @@ function holdsContract(d) {
   const ranks = (c) => Object.fromEntries(c.sizes.map((s) => [s.size, [s.rank || null, s.score]]));
 
   await test('8  W2: M ranks first but is 1.6 in short in the body; S, ranked second, is inside every band — OK, S, described as S, M still rank 1', () => {
-    const profile = referenceProfile(REF_IN, 'in');
+    const profile = wRef(REF_IN, 'in');
     const chart = entered([{ size: 'S', measurements: W2_S }, { size: 'M', measurements: W2_M }, { size: 'L', measurements: W2_L }]);
     const plain = engine.compare(profile, chart);
     assert.deepStrictEqual([plain.closest, plain.recommended], ['M', 'M']);
@@ -596,7 +612,7 @@ function holdsContract(d) {
   });
 
   await test('8  W2: rank order, not chart order — two acceptable sizes below a failing rank 1: the better-ranked one, wherever the chart lists it', () => {
-    const profile = referenceProfile(REF_IN, 'in');
+    const profile = wRef(REF_IN, 'in');
     /* listed S, M, L; ranked M (fails), L (chest 1.3 in narrower), S (chest 1.4 in wider) */
     const chart = entered([{ size: 'S', measurements: row(23.4, 27, 24, 20) }, { size: 'M', measurements: W2_M }, { size: 'L', measurements: row(20.7, 27, 24, 20) }]);
     const c = engine.compare(profile, chart);
@@ -614,7 +630,7 @@ function holdsContract(d) {
   });
 
   await test('8  W2: a tie in score is broken as the engine breaks it — the chart\'s order — and the tied size is named as the alternative only because it is acceptable too', () => {
-    const profile = referenceProfile(REF_IN, 'in');
+    const profile = wRef(REF_IN, 'in');
     const narrow = row(20.7, 27, 24, 20);
     const wide = row(23.3, 27, 24, 20);
     /* the two acceptable sizes score the same (chest 1.3 in either way) */
@@ -630,7 +646,7 @@ function holdsContract(d) {
   });
 
   await test('8  W2: confidence is the engine\'s own for the size given — never lowered for being below rank 1', () => {
-    const profile = referenceProfile(REF_IN, 'in');
+    const profile = wRef(REF_IN, 'in');
     const chart = entered([{ size: 'S', measurements: W2_S }, { size: 'M', measurements: W2_M }, { size: 'L', measurements: W2_L }]);
     const { decision: d, detail } = decision.decideWithDetail(profile, chart);
     /* rank 1 is in a near tie with S, which lowers M's own reliability; S's next (L) is far behind */
@@ -645,7 +661,7 @@ function holdsContract(d) {
   });
 
   await test('8  W2: no ranked size is acceptable — NO_MATCH, closest still rank 1 with its own reasons; an unranked size is never the answer', () => {
-    const profile = referenceProfile(REF_IN, 'in');
+    const profile = wRef(REF_IN, 'in');
     /* M: length and sleeves short; L: chest 2 in wider flat (4 in around); S: chest 2 in narrower */
     const chart = entered([{ size: 'S', measurements: row(20, 27, 24, 20) }, { size: 'M', measurements: row(22, 24.5, 21, 20) }, { size: 'L', measurements: row(24, 28, 25, 21) }]);
     const { decision: d, detail } = decision.decideWithDetail(profile, chart);
@@ -664,7 +680,7 @@ function holdsContract(d) {
   });
 
   await test('8  W2: an alternative is named only when it is acceptable too — beside an OK, never a size the bands refuse', () => {
-    const profile = referenceProfile(REF_IN, 'in');
+    const profile = wRef(REF_IN, 'in');
     /* M 1.5 in short in the body (the band's edge: accepted); S 1.6 in short (refused), within 0.2 of M's score */
     const chart = entered([{ size: 'S', measurements: row(22, 25.4, 24, 20) }, { size: 'M', measurements: row(22, 25.5, 24, 20) }]);
     const c = engine.compare(profile, chart);
@@ -677,7 +693,7 @@ function holdsContract(d) {
   });
 
   await test('8  W2: compare() without pick is unchanged; pick is checked against the ranked sizes', () => {
-    const profile = referenceProfile(REF_IN, 'in');
+    const profile = wRef(REF_IN, 'in');
     const chart = entered([{ size: 'S', measurements: W2_S }, { size: 'M', measurements: W2_M }, { size: 'L', measurements: W2_L }]);
     const plain = engine.compare(profile, chart);
     /* unset, null, or the top-ranked size: the same answer */
@@ -695,14 +711,15 @@ function holdsContract(d) {
     /* a catalogue record (checked in memory) is unchanged too */
     asChecked([ZARA], () => {
       const zara = sizing.byId(ZARA);
+      /* Zara's own methods (seam to seam, from the seam), its sleeves stated set-in as TEST FIXTURE data and the shopper's said set-in */
       const ref = referenceProfile(rowOf(zara, 'S'));
       assert.deepStrictEqual(engine.compare(ref, zara, { pick: undefined }), engine.compare(ref, zara));
       assert.strictEqual(decision.decide(ref, zara).size, 'S');
-    });
+    }, SET_IN);
   });
 
   await test('8  W2: a rejected size ranked above the answer never lowers its confidence — only the near-tie rule below it, as before', () => {
-    const profile = referenceProfile(REF_IN, 'in');
+    const profile = wRef(REF_IN, 'in');
     /* M (rank 1, fails) and S (rank 2, passes) are a near tie: 1.536 and 1.69 */
     const chart = entered([{ size: 'S', measurements: W2_S }, { size: 'M', measurements: W2_M }, { size: 'L', measurements: W2_L }]);
     const plain = engine.compare(profile, chart);
@@ -736,7 +753,7 @@ function holdsContract(d) {
       assert.deepStrictEqual(item.decision.qualifiers.filter((q) => q.code === 'higher-ranked-size-outside-range').map((q) => [q.size, q.dims]), [['S', ['bodyLength']]]);
       /* the alternative listed is the decision's: named only when acceptable too */
       assert.strictEqual(item.alternative, item.decision.alternative);
-    });
+    }, SET_IN);
   });
 
   await test('8  UNIQLO hoodie (checked), chest 24.5 in: even its smallest garment is far roomier than a true-to-size fit wants — NO_MATCH', () => {
@@ -751,7 +768,7 @@ function holdsContract(d) {
 
   /* ---------- 9. not enough to go on: INSUFFICIENT_DATA ---------- */
 
-  await test('9  nothing about the shopper, or no record: INSUFFICIENT_DATA with what is missing', () => {
+  await test('9  nothing about the shopper, or no record: INSUFFICIENT_DATA with what is missing', () => asChecked(BODY_CHARTS, () => {
     const empty = decision.decide(Object.assign(Schema.empty(), { garments: { hoodies: { line: 'men' } } }), sizing.byId(NIKE));
     holdsContract(empty);
     assert.deepStrictEqual([empty.outcome, codes(empty)], [INSUFFICIENT_DATA, ['missing-required-measurement']]);
@@ -761,32 +778,32 @@ function holdsContract(d) {
     const broken = copy(sizing.byId(NIKE));
     delete broken.sizes;
     assert.deepStrictEqual(codes(decision.decide(chestProfile(40), broken)), ['no-record']);
-  });
+  }));
 
-  await test('9  a reference garment against a body chart only: INSUFFICIENT_DATA "body-vs-garment"', () => {
+  await test('9  a reference garment against a body chart only: INSUFFICIENT_DATA "body-vs-garment"', () => asChecked(BODY_CHARTS, () => {
     const d = decision.decide(referenceProfile({ chestWidth: 56, shoulderWidth: 50, sleeveLength: 60, bodyLength: 70 }), sizing.byId(NIKE));
     holdsContract(d);
     assert.strictEqual(d.outcome, INSUFFICIENT_DATA);
     assert.ok(codes(d).includes('body-vs-garment'), JSON.stringify(d.reasons));
-  });
+  }));
 
   /* ---------- 10. the supported paths still answer ---------- */
 
-  await test('10 Nike, chest 39 in: OK, M, by the body chart (as before); chest 30 in: OK, XXS', () => {
+  await test('10 Nike, chest 39 in: OK, M, by the body chart (as before); chest 30 in: OK, XXS', () => asChecked(BODY_CHARTS, () => {
     const nike = sizing.byId(NIKE);
     const d = decision.decide(chestProfile(39), nike);
     holdsContract(d);
     assert.deepStrictEqual([d.outcome, d.size, d.method, d.via], [OK, 'M', 'body-chart', 'recommend']);
     assert.strictEqual(d.size, engine.recommend(chestProfile(39), nike).leading);
     assert.strictEqual(decision.decide(chestProfile(30), nike).size, 'XXS');
-  });
+  }));
 
   await test('10 Zara (checked), a reference the same as M: OK, M, garment with garment', () => {
     asChecked([ZARA], () => {
       const d = decision.decide(referenceProfile(rowOf(sizing.byId(ZARA), 'M')), sizing.byId(ZARA));
       holdsContract(d);
       assert.deepStrictEqual([d.outcome, d.size, d.method, d.via], [OK, 'M', 'reference-garment', 'compare']);
-    });
+    }, SET_IN);
   });
 
   await test('10 UNIQLO hoodie (checked), chest 40 in, true to size: OK, M, body plus room — the evaluation suite\'s own case', () => {
@@ -804,7 +821,7 @@ function holdsContract(d) {
         referenceProfile({ chestWidth: 56, shoulderWidth: 50, sleeveLength: 60, bodyLength: 70 }),
         referenceProfile({ chestWidth: 22, shoulderWidth: 19, sleeveLength: 24, bodyLength: 27 }, 'in', 'tshirts')];
       let seen = new Set();
-      sizing.RECORDS.forEach((r) => profiles.forEach((p) => ['compare', 'recommend', undefined].forEach((via) => {
+      sizing.all().forEach((r) => profiles.forEach((p) => ['compare', 'recommend', undefined].forEach((via) => {
         const d = decision.decide(p, r, { via });
         holdsContract(d);
         /* with a reference garment the answer rests on it alone, whichever route asked */
@@ -818,7 +835,7 @@ function holdsContract(d) {
     });
   });
 
-  await test('10 the API keeps its fields and adds the decision beside them', async () => {
+  await test('10 the API keeps its fields and adds the decision beside them', () => asChecked(BODY_CHARTS, async () => {
     const handler = require('../api/size-recommendation');
     const { fitFor } = handler;
     const nike = sizing.byId(NIKE);
@@ -829,7 +846,7 @@ function holdsContract(d) {
     assert.strictEqual(item.decision.comparison, 'body-to-body-chart');
     assert.strictEqual(decision.resultTypeOf(item.decision), 'body-estimate');
     assert.strictEqual(item.decision.size, item.estimate);
-  });
+  }));
 
   out(`\n${passed} passed, ${failures.length} failed\n\n`);
   process.exit(failures.length ? 1 : 0);

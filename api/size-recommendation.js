@@ -225,7 +225,7 @@ function fitFor(profile, type, items) {
   if (covered) {
     items.forEach((item, index) => {
       if (!item.url && !item.name) return;
-      const match = engine.matchProduct({ brand: item.brand, product: { url: item.url, name: item.name } }, sizing.RECORDS, type);
+      const match = engine.matchProduct({ brand: item.brand, product: { url: item.url, name: item.name } }, sizing.all(), type);
       if (match) sized.push(Object.assign({ index, matchedBy: match.by }, sizeListing(profile || null, match.record)));
     });
   }
@@ -458,7 +458,7 @@ async function handler(req, res) {
   /* Find Fit's wardrobe anchors: what Fynd's own records say, nothing
      about the caller, and only a record a comparison can use */
   if (early.anchors !== undefined) {
-    const anchors = sizing.RECORDS.map(sizing.summary).filter((s) => s.comparable)
+    const anchors = sizing.all().map(sizing.summary).filter((s) => s.comparable)
       .map(({ id, brand, name, category, line, region, sizes, url }) => ({ id, brand, name, category, line, region, sizes, url }));
     return res.status(200).json({ anchors });
   }
@@ -535,7 +535,7 @@ async function handler(req, res) {
   }
 
   if (!product) {
-    return res.status(200).json({ products: sizing.RECORDS.map(sizing.summary) });
+    return res.status(200).json({ products: sizing.all().map(sizing.summary) });
   }
   if (!PRODUCT_ID.test(product)) {
     return res.status(400).json({ error: 'That is not a product id.', reason: 'invalid-product' });

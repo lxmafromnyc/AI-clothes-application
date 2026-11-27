@@ -103,7 +103,8 @@
 
 const sizingSchema = require('./schema');
 const methodRegistry = require('./methods');
-const { RECORDS } = require('./records');
+/* the active record collection (records.all()): the shared catalogue, or a test's isolated one */
+const sizingRecords = require('./records');
 const ProfileSchema = require('../../assets/fit-profile-schema.js');
 
 const IN_TO_CM = 2.54;
@@ -306,7 +307,7 @@ const invalidMessage = (problems) => `Some measurements can’t be used: ${probl
 /* A pool of records a caller supplies is held to what records.js holds
    the catalogue to: a record that fails its schema is left out, never
    half-used. The catalogue itself was checked as it loaded. */
-const checkedPool = (records) => (records === RECORDS ? RECORDS
+const checkedPool = (records) => (records === sizingRecords.RECORDS ? records
   : (Array.isArray(records) ? records : []).filter((r) => sizingSchema.validate(r).length === 0));
 
 /* ---------------------------------------------------------
@@ -388,10 +389,16 @@ function measuredRecord(anchor, category) {
     units: m.unit,
     sizes: [size],
     charts: { garment: { dimensions: dims, sizes: { [size]: row } } },
+    /* how its sleeves are attached, only as the shopper said it — never assumed */
+    ...shopperConstruction(anchor.construction),
     verification: { status: SHOPPER_MEASURED }
   };
 }
 const isShopperMeasured = (record) => Boolean(record && record.verification && record.verification.status === SHOPPER_MEASURED);
+/* a shopper's own answer for how a garment's sleeves are attached, as a record's
+   `construction` — or nothing at all when they didn't say (never assumed) */
+const SHOPPER_SAID = 'stated by the shopper';
+const shopperConstruction = (sleeve) => (sizingSchema.SLEEVE_TYPES.includes(sleeve) ? { construction: { sleeve, notes: null, source: SHOPPER_SAID } } : {});
 
 /* ---------------------------------------------------------
    The item the shopper is considering, entered by hand
@@ -442,6 +449,10 @@ function candidateRecord(candidate) {
     /* origin: the shopper's, never "official-published" (measurementOf's default for a catalogue
        chart); source: the product's page, when the extension read it there */
     charts: { garment: Object.assign({ measures: 'finished-garment', origin: SHOPPER_ENTERED, source: candidate.url || null, dimensions: dims, sizes: rows }, Object.keys(provenance).length ? { provenance } : {}) },
+    /* the hand-entered item only (one size, Find Fit's form): the shopper's answer for what they copied. A
+       whole chart read from a product page (a link, the extension) is a catalogue candidate: never the shopper's
+       answer, so its construction stays unknown */
+    ...(Array.isArray(candidate.sizes) ? {} : shopperConstruction(candidate.construction)),
     verification: { status: SHOPPER_ENTERED }
   };
 }
@@ -466,7 +477,8 @@ function readableRecord(record) {
   /* candidateRecord()'s own shape and nothing else: its id, a garment chart only — never a
      catalogue record relabelled, whose body chart and sources a hand-entered item never has */
   const own = record.id === 'your-candidate' && Object.keys(record.charts || {}).join() === 'garment'
-    && Object.keys(record).every((k) => ['id', 'brand', 'product', 'category', 'units', 'sizes', 'charts', 'verification'].includes(k));
+    && Object.keys(record).every((k) => ['id', 'brand', 'product', 'category', 'units', 'sizes', 'charts', 'construction', 'verification'].includes(k))
+    && (record.construction === undefined || (record.construction && sizingSchema.SLEEVE_TYPES.includes(record.construction.sleeve) && record.construction.source === SHOPPER_SAID));
   return Boolean(own && CATEGORY_PARAMS[record.category] && Array.isArray(record.sizes) && record.sizes.length >= 1 && record.sizes.length <= 30 && g && g.sizes && record.sizes.every((s) => g.sizes[s])
     && Object.keys(g.dimensions).every((d) => COMPARE_DIMS.includes(d) && methodRegistry.isMethod(d, g.dimensions[d].method)));
 }
@@ -681,6 +693,31 @@ function readShopper(profile, record, pool, options) {
    Scoring
    --------------------------------------------------------- */
 
+/* A measurement taken from a seam (sleeve from the shoulder seam,
+   shoulders seam to seam) is the same method on two garments only when
+   the seam sits in the same place: a raglan has no shoulder seam, a
+   dropped shoulder puts it on the upper arm. So it is compared only when
+   BOTH garments say how their sleeves are attached, and say the same:
+   a catalogue record in its own `construction` (schema.garmentEligibility
+   already refuses one whose seam measurement lacks it), the shopper's own
+   garment or hand-entered item only as the shopper said it. Unknown on
+   either side is never assumed: the measurement is left out, and every
+   other dimension is compared as before. Why, or null when they compare. */
+function constructionClash(d, record, refRecord) {
+  const method = record.charts.garment.dimensions[d].method;
+  if (!sizingSchema.isSeamMethod(d, method)) return null;
+  const sleeveOf = (r) => (r.construction && sizingSchema.SLEEVE_TYPES.includes(r.construction.sleeve) ? r.construction.sleeve : null);
+  const a = sleeveOf(record);
+  const b = sleeveOf(refRecord);
+  if (a && b && a === b) return null;
+  const refName = isShopperMeasured(refRecord) ? 'yours' : `${refRecord.brand}'s`;
+  if (!a || !b) {
+    const unknown = [!a ? `${record.brand}'s` : null, !b ? refName : null].filter(Boolean).join(' and ');
+    return `measured from the seam, and how the sleeves are attached isn’t known for ${unknown} — Fynd doesn’t assume it`;
+  }
+  return `measured from the seam on garments made differently — ${record.brand}'s has ${SLEEVE_WORDS[a]}; ${refName} has ${SLEEVE_WORDS[b]}`;
+}
+
 /* garment against a garment known to fit, dimension by dimension */
 /* Which dimensions a product and the garment that fits can be set side
    by side on: `used`, { <dim>: { value, estimated } } with the
@@ -708,6 +745,8 @@ function comparable(record, shopper) {
       skipped.push({ dim: d, code: 'method-mismatch', why: `measured differently — ${record.brand}'s ${METHOD_WORDS[dims[d].method] || dims[d].method}, ${ref.measured ? 'yours' : `${ref.record.brand}'s`} ${METHOD_WORDS[refDims[d].method] || refDims[d].method}` });
       return;
     }
+    const clash = constructionClash(d, record, ref.record);
+    if (clash) { skipped.push({ dim: d, code: 'method-mismatch', why: clash }); return; }
     used[d] = v;
   });
   return { used, skipped };
@@ -1132,7 +1171,7 @@ function insufficient(record, missing, next) {
 }
 
 function recommend(profile, record, opts) {
-  const options = Object.assign({ includeUnverified: false, records: RECORDS }, opts || {});
+  const options = Object.assign({ includeUnverified: false, records: sizingRecords.all() }, opts || {});
   const pool = checkedPool(options.records);
   const shown = record && record.id;
 
@@ -1610,7 +1649,7 @@ function compare(profile, record, opts) {
 }
 
 function rankedComparison(profile, record, opts) {
-  const options = Object.assign({ includeUnverified: false, records: RECORDS }, opts || {});
+  const options = Object.assign({ includeUnverified: false, records: sizingRecords.all() }, opts || {});
   const no = (code, message, next, extra) => ({ result: Object.assign({ status: 'insufficient', productId: record ? record.id : null, missing: [{ code, message }], next: next || [] }, extra || {}), describe: null });
   const ready = prepare(profile, record, options);
   if (ready.fail) return no(ready.fail.code, ready.fail.message, ready.fail.next, ready.fail.extra);
@@ -1863,7 +1902,7 @@ const NEXT_STEP = {
 };
 
 function validate(profile, record, opts) {
-  const options = Object.assign({ includeUnverified: false, records: RECORDS }, opts || {});
+  const options = Object.assign({ includeUnverified: false, records: sizingRecords.all() }, opts || {});
   const ready = prepare(profile, record, options);
   const product = record && record.brand && record.product ? { brand: record.brand, name: record.product.name } : null;
   if (ready.fail) {

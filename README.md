@@ -2163,17 +2163,137 @@ likes that kind of garment to fit — not a letter-to-letter conversion — and 
 how sure it is from the quality of the data, not from its own score. It never
 says a size will fit.
 
-**Four of the six hoodie and sweatshirt records are verified.** Each was checked against its official sources
-and, with the owners' approval, marked
-`{ "status": "verified", "checkedBy": "claude-code-source-audit", "checkedAt": "2026-10-10" }`.
-UNIQLO's two (Sweat Pullover Hoodie E475378, Sweatshirt E475377) were marked the
-same way and are now **pending review** (`review.status: "pending"`): that check was
-an automated source audit, and no person has confirmed that the two products
-really publish identical Product Size tables, as the Sweatshirt's own note asks.
-Their `review.needs` says what the check is. Every record
-keeps its official source URLs and the brand's own words for every
-measurement. The engine still refuses to suggest from any record that is not
-verified ("not enough data: unverified"), and the code never sets that status.
+**No record is verified, so nothing is compared garment to garment yet.**
+Four body-chart records (Carhartt K121 and K124, Nike FN3859 and FN3886) were
+marked `{ "status": "verified", "checkedBy": "claude-code-source-audit", "checkedAt": "2026-10-10" }`.
+That was an automated source audit, not a person's approval, so on 2026-11-26
+they were set back to `unverified`. Every number and quote is kept, and a note
+on each record says why. UNIQLO's two (Sweat Pullover Hoodie E475378,
+Sweatshirt E475377) were withdrawn earlier for the same reason, and are
+**pending review** (`review.status: "pending"`): no person has confirmed that
+the two products really publish identical Product Size tables. Their
+`review.needs` says what the check is. Every record keeps its official source
+URLs and the brand's own words for every measurement. The engine refuses to
+suggest from any record that is not verified ("not enough data: unverified"),
+and the code never sets that status.
+
+### What makes a measurement eligible for a comparison
+
+A record's garment measurement is compared with another garment's only when all
+of these hold. Each is checked in one place, `schema.garmentEligibility`, which
+`schema.measurementStatus` and the engine's `comparable()` read. There is no
+second list of rules.
+
+1. **Garment, not body.** It comes from `charts.garment`, marked
+   `measures: "finished-garment"`, from an official published chart or a
+   recorded physical measurement. A body chart, a mixed chart, or a chart with no
+   type is never compared with a garment. Crowdsourced numbers never are either.
+2. **A stated method, from an archived source.** The method is a canonical one,
+   not `not-stated`, and its `methodSource` is a URL on the brand's own site
+   with the brand's words. A quoted excerpt alone isn't evidence: the approval
+   (point 4) has to list an archived copy of every chart source and every
+   `methodSource` URL the record cites.
+3. **Construction, where it matters.** A measurement taken from a seam (sleeve
+   from the shoulder seam, shoulders seam to seam) also needs
+   `construction.sleeve` stated, with its source, because a raglan has no
+   shoulder seam and a dropped shoulder puts the seam on the upper arm. Two such
+   measurements are compared only when **both** garments state how their sleeves
+   are attached, and state the same thing (engine `constructionClash`).
+   - **The shopper's own garment** states it only through the shopper's answer
+     to "How the sleeves are attached" (set-in, raglan, dropped, or "Don't
+     know"). The question is on Find Fit's garment form and on the Fit Profile
+     page's garment card, and the answer is stored as `anchor.construction`.
+     A garment saved without an answer stays unknown, with no default, and
+     "Don't know" clears an earlier answer.
+   - **The item typed in by hand** on Find Fit (one size, copied from its
+     chart) takes the shopper's answer for what they copied: `construction`
+     on the hand-entered item (`assets/fit-candidate.js` `readCandidate`).
+   - **A catalogue candidate** (a chart found from a pasted link, or read by
+     the extension) takes construction only from evidence about the product:
+     a catalogue record's own `construction`, on the record path. The
+     shopper's answer never fills it in or confirms it. `readChart` doesn't
+     read a `construction`, and `engine.candidateRecord` gives a whole chart
+     none, so the link card and the extension don't ask. No page reading
+     extracts it today, so a page's chart is unknown and its seam measurements
+     are left out.
+   - Unknown on either side is never assumed. That measurement is left out, the
+     decision says why, and every other compatible measurement is still
+     compared.
+
+   Chest, body length, a sleeve from the centre back and shoulders across their
+   broadest part don't depend on construction, so nothing more is asked of them.
+   With the form's own methods (shoulders seam to seam, sleeve from the seam), a
+   shopper who answers "Don't know" on either garment is left with chest and
+   length. That is too few for a garment-to-garment answer, which needs three of
+   the four, chest included, so the answer is INSUFFICIENT_DATA.
+4. **A human approval, not just a status.** `verification.status: "verified"`
+   with `checkedBy` and `checkedAt` is needed but isn't enough, and neither is
+   any field on the record itself (an `approvedBy` there counts for nothing).
+   `schema.isVerified` also needs an entry in `api/_sizing/approvals.json` that:
+   - names the record (`recordId`);
+   - matches its current content (`contentHash`: `schema.contentHash`, a
+     sha256 of every field but `verification`, so any edit after approval undoes
+     it);
+   - names the person who approved it and the date (`approvedBy`,
+     `approvedAt`). A name that reads as an automated check (an audit, a script,
+     a bot, CI, an extractor, an AI model) is refused;
+   - lists `evidence[]` of `{ url, archive, sha256 }`, with each archive saved
+     under `api/_sizing/evidence/`.
+
+   No review may be pending.
+
+**The approver name is not authentication.** `approvedBy` is a string anyone
+with write access to the repository can type. Fynd checks that it isn't blank
+and doesn't read as an automated check. It does not and cannot verify who wrote
+it. An approval is only as good as the review behind it, so **a real person must
+review the archived source evidence before an entry is added**:
+
+1. Save each source page the record cites (every chart `source` and every
+   `methodSource.url`) under `api/_sizing/evidence/`, as it was read.
+2. Open each archive and compare every value, unit, size label and method in the
+   record with it, cell by cell. Confirm that the chart describes the finished
+   garment and not the body. Confirm the sleeve construction wherever a seam
+   measurement relies on it.
+3. Only then add the entry to `approvals.json`, with `contentHash` worked out
+   from the record as reviewed and each archive's sha256. Set the record's
+   `verification`, and update the pinned list in `scripts/test-sizing.js`,
+   which re-hashes every archive.
+4. Do all of this in its own change, for another person to review. An automated
+   audit, a script, a test, an extractor or an AI assistant may help collect
+   evidence, but must never add an entry or mark a record verified.
+
+No code writes `approvals.json`: `test-sizing` checks that only `schema.js`
+reads it. Validation, tests, the drafting script and the reference-data builder
+can't create an approval. What the mechanism ensures is that an approval is a
+separate, visible change, bound to the exact record content and its archived
+sources. It cannot ensure the review happened.
+
+**Tests** reach the logic past this gate with in-memory approvals
+(`scripts/fixtures/as-checked.js`), never on disk:
+- A copy keeps the record's own construction. A test whose subject needs seam
+  measurements compared states one explicitly
+  (`asChecked(ids, fn, { construction: 'set-in' })`), labelled
+  `TEST FIXTURE … not the brand's word` in the copy's `construction.source`.
+- The shared catalogue `sizing.RECORDS` is frozen, and no test or helper ever
+  replaces, mutates or swaps one of its entries. Every reader (engine,
+  decision, endpoints, brand modules, the reference-data builder) goes through
+  `sizing.all()` and `sizing.byId()`.
+- `asChecked` builds an **isolated collection**: the shared records, with the
+  named ones replaced by approved copies. It runs the callback inside
+  `sizing.withCollection(isolated, fn)`, so those readers see that collection
+  only for the callback. Production code never calls `withCollection`.
+- `test-sizing` proves the shared list is frozen and keeps the same
+  unchanged objects before, during and after.
+
+Not built yet:
+- No archived evidence exists for any record. `api/_sizing/evidence/` is
+  empty, so no record can be approved until someone saves its sources there.
+- No product evidence for construction is read from any page, so link and
+  extension comparisons never use seam-to-seam shoulders or sleeves from the
+  shoulder seam. Those comparisons rest on chest, length and the
+  construction-free methods: sleeve from the centre back, shoulders across
+  the broadest part, matched by the garment's "measure more" alternates.
+
 There is no product-card panel yet; this is the API and its evaluation.
 
 **Four T-shirt records are in, unverified.** Copied from each brand's own US page
@@ -2221,7 +2341,8 @@ labelled general.
 `copied-from-page` (every record before this one, and the default),
 `supplied-transcription`, `browser-extension` or `server-read`. The chart,
 the product page and the notes all say it in those words. None of them is a
-check: only `verification` marks a record verified.
+check: only `verification` together with a human approval in
+`api/_sizing/approvals.json` marks a record verified.
 
 ### The favourite T-shirt
 

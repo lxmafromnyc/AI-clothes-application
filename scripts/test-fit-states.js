@@ -54,7 +54,7 @@ const engine = require('../api/_sizing/engine');
 const decision = require('../api/_sizing/decision');
 const chartOf = require('../api/_sizing/chart');
 const official = require('../api/_sizing/official-charts');
-const { asChecked, UQ_PAIR } = require('./fixtures/as-checked');
+const { asChecked, approvedCopy, UQ_PAIR } = require('./fixtures/as-checked');
 const X = require('./fixtures/cross-brand');
 
 const IF_STATED = { chestWidth: 'garment-circumference', bodyLength: 'center-back-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' };
@@ -81,6 +81,7 @@ const both = (profile, record, opts) => {
   D.set(c, clone(decision.decide(profile, record, Object.assign({ via: 'compare' }, opts || {}))));
   return c;
 };
+/* UNIQLO doesn't say how its sleeves are attached: the approved copies state set-in as TEST FIXTURE data */
 asChecked(UQ_PAIR, () => X.withFixtureBrand(() => {
   const hoodie = sizing.byId(X.UQ_HOODIE);
   C.checkedChart = clone(chartOf.fromRecord(hoodie));
@@ -96,14 +97,18 @@ asChecked(UQ_PAIR, () => X.withFixtureBrand(() => {
   C.methods = both(uniqloRef('M'), everlane(base));
   const bodyOnly = clone(hoodie);
   delete bodyOnly.charts.garment;
-  C.bodyAnswer = both(uniqloRef('M'), bodyOnly);
+  /* changed after its approval, so approved again as changed (in memory only) */
+  C.bodyAnswer = both(uniqloRef('M'), approvedCopy(bodyOnly));
   C.noReference = both(Schema.empty(), hoodie);
-}));
+}), { construction: 'set-in' });
 /* W2: a chart whose top-ranked size (L) is 4 cm long in the body — past the 1½ in band — and whose
    second (M) is inside every band: the answer as the route builds it (decision.decideWithDetail, the
    comparison it rests on held to it — api/size-recommendation.js comparedAnswer) */
 {
-  const FORM = { chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' };
+  /* a chart read from a page is a catalogue candidate: it never takes the shopper's answer for how its sleeves are attached,
+     so both garments measure the sleeve from the centre back and the shoulders across their broadest part (the bands are
+     per dimension, whatever the method) — nothing depends on construction */
+  const FORM = { chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'broadest-part-of-shoulders', sleeveLength: 'center-back-to-cuff' };
   const rows = { S: [53, 45, 64, 59], M: [55.5, 47.5, 66, 60.5], L: [58, 50, 68, 62], XL: [60.5, 52.5, 70, 63.5] };
   const chart = engine.candidateRecord({ type: 'hoodies', brand: 'Illustrative Outfitters', name: 'Illustrative Heavyweight Hoodie', unit: 'cm', methods: Object.assign({ registry: 1 }, FORM),
     sizes: Object.entries(rows).map(([size, [chestWidth, shoulderWidth, bodyLength, sleeveLength]]) => ({ size, measurements: { chestWidth, shoulderWidth, bodyLength, sleeveLength } })) });

@@ -36,7 +36,49 @@ FILES.forEach((record) => {
   else RECORDS.push(Object.freeze(record));
 });
 
-const byId = (id) => RECORDS.find((r) => r.id === id) || null;
+/* The shared catalogue is frozen: nothing — a request, a test — can add,
+   remove, replace or change one of its records. */
+Object.freeze(RECORDS);
+
+/* The collection every reader uses (all(), byId()): the shared catalogue,
+   unless a test runs inside withCollection(), which gives that callback an
+   isolated collection of its own — the shared RECORDS is never touched.
+   Production code never calls withCollection.
+
+   Test-only, and for one test at a time. The active collection is a stack:
+   a nested call sees its own collection and gives the outer one back when
+   it ends — a throw and a rejection included. Two calls that overlap
+   without nesting (two callbacks running at once) can't both be right
+   about what every reader sees, so the one that ends out of turn is
+   refused with an error, and the readers fall back to whatever is still
+   genuinely open beneath it — never to a collection that has ended. While
+   a callback awaits, anything else running in the same process reads its
+   collection: tests run one after another, so nothing else is. */
+const stack = [];
+let active = RECORDS;
+const all = () => active;
+function withCollection(records, fn) {
+  if (!Array.isArray(records)) throw new Error('withCollection: a list of records');
+  const mine = Object.freeze(records.slice());
+  stack.push(mine);
+  active = mine;
+  const restore = () => {
+    const at = stack.lastIndexOf(mine);
+    const inTurn = at === stack.length - 1;
+    if (at >= 0) stack.splice(at, 1);
+    active = stack.length ? stack[stack.length - 1] : RECORDS;
+    if (!inTurn) throw new Error('withCollection: calls overlapped without nesting — each test needs its own turn');
+  };
+  let out;
+  try { out = fn(); } catch (err) { try { restore(); } catch (e) { /* the callback's own error is the one to see */ } throw err; }
+  if (out && typeof out.then === 'function') {
+    return out.then((value) => { restore(); return value; }, (err) => { try { restore(); } catch (e) { /* as above */ } throw err; });
+  }
+  restore();
+  return out;
+}
+
+const byId = (id) => active.find((r) => r.id === id) || null;
 
 /* What a shopper may see about the records: what they are, and whether
    anybody has checked them. */
@@ -60,8 +102,9 @@ const summary = (record) => {
     garmentDimensions: garment,
     garmentOrigin: g ? (g.origin || 'official-published') : null,
     /* a garment-to-garment comparison is possible only with a checked
-       record that publishes finished-garment measurements */
-    comparable: schema.isVerified(record) && garment.length > 0
+       record that publishes finished-garment measurements, at least one
+       of them eligible (schema.garmentEligibility) */
+    comparable: schema.isVerified(record) && garment.some((g) => schema.measurementStatus(record, g.dim) === 'verified')
   };
 };
 
@@ -78,4 +121,4 @@ function recordFrom(record) {
   }[how];
 }
 
-module.exports = { RECORDS, byId, summary, problems, recordFrom };
+module.exports = { RECORDS, all, withCollection, byId, summary, problems, recordFrom };

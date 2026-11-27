@@ -136,7 +136,12 @@ const withRowField = (id, field, value) => {
    gating is tested in test-sizing.js and test-e2e.js. */
 const sizingRecords = require('../api/_sizing/records');
 /* the UNIQLO pair, marked checked in memory for a test of the comparison on their real numbers */
-const { asChecked, UQ_PAIR } = require('./fixtures/as-checked');
+const { approvedCopy: approvedAsIs, UQ_PAIR } = require('./fixtures/as-checked');
+/* UNIQLO and Zara don't say how their sleeves are attached; these tests' approved copies state set-in as
+   TEST FIXTURE data (fixtures/as-checked.js), and the shoppers' garments say set-in too */
+const SET_IN = { construction: 'set-in' };
+const asChecked = (ids, fn) => require('./fixtures/as-checked').asChecked(ids, fn, SET_IN);
+const approvedCopy = (r) => approvedAsIs(r, SET_IN);
 const X = require('./fixtures/cross-brand');
 const sizingEngine = require('../api/_sizing/engine');
 const sizingDecision = require('../api/_sizing/decision');
@@ -199,10 +204,13 @@ const server = http.createServer((req, res) => {
       return res.end(JSON.stringify({ fit: sizingEndpoint.fitFor(fitProfileState.profile, url.searchParams.get('fit'), sizingEndpoint.readItems(url.searchParams.get('items'))) }));
     }
     const id = url.searchParams.get('product');
-    if (!id) return res.end(JSON.stringify({ products: sizingRecords.RECORDS.map(sizingRecords.summary) }));
+    if (!id) return res.end(JSON.stringify({ products: sizingRecords.all().map(sizingRecords.summary) }));
     const unit = url.searchParams.get('unit') || undefined;
     /* beside it, the decision the real endpoint sends: the page's only authority for a recommended size */
-    const record = sizingRecords.byId(id);
+    /* a garment record that doesn't say how its sleeves are attached is given set-in as TEST FIXTURE data,
+       so the audit sees every row (never the brand's word; an approved copy keeps its own) */
+    const live = sizingRecords.byId(id);
+    const record = live && live.charts.garment && !(live.construction && live.construction.sleeve) ? Object.assign(JSON.parse(JSON.stringify(live)), { construction: require('./fixtures/as-checked').FIXTURE_CONSTRUCTION('set-in') }) : live;
     const decided = sizingDecision.decide(fitProfileState.profile, record, { via: 'compare', unit });
     return res.end(JSON.stringify({ comparison: sizingDecision.heldComparison(sizingEngine.compare(fitProfileState.profile, record, { includeUnverified: true, unit }), decided), decision: decided, resultType: 'garment-comparison' }));
   }
@@ -2873,6 +2881,8 @@ const openFallbacks = (target) => target.addInitScript(() => {
       await page.fill(`#ffc-m-${d}`, String(g.sizes[at][d].value));
       await page.selectOption(`#ffc-how-${d}`, g.dimensions[d].method);
     }
+    /* the shopper says the item's sleeves are set-in, as their garment's */
+    await page.selectOption('#ffc-construction', 'set-in');
     await page.click('#ff-submit');
     await page.waitForSelector('#fit-compare:not([hidden]):not([data-verdict="loading"]) .fit-compare-title', { timeout: 10000 });
   };
@@ -3004,7 +3014,7 @@ const openFallbacks = (target) => target.addInitScript(() => {
       /* signed in: a saved hoodie reference, and a new T-shirt card opened for the search */
       accountState = accountReply({ extra: SIGNED_IN });
       fitProfileState = fitProfileReply(Object.assign(require('../assets/fit-profile-schema.js').empty(), {
-        garments: { hoodies: { favorite: 'perfect', fitGoal: 'oversized', troubleZones: [], line: 'men', anchor: { brand: 'Carhartt', size: 'L', likes: ['chest'], notes: 'Roomy in the body', measurements: { unit: 'cm', chestWidth: 64, bodyLength: 70, shoulderWidth: 56, sleeveLength: 65 } } } }
+        garments: { hoodies: { favorite: 'perfect', fitGoal: 'oversized', troubleZones: [], line: 'men', anchor: { brand: 'Carhartt', size: 'L', likes: ['chest'], notes: 'Roomy in the body', construction: 'set-in', measurements: { unit: 'cm', chestWidth: 64, bodyLength: 70, shoulderWidth: 56, sleeveLength: 65 } } } }
       }));
       page = await openPage('fit-profile.html?for=tshirts&from=search&q=white%20tee', { viewport });
       await page.waitForSelector('#card-tshirts', { timeout: 10000 });
@@ -3113,7 +3123,7 @@ const openFallbacks = (target) => target.addInitScript(() => {
       await page.close();
 
       /* a home-measured hoodie: only two dimensions measured the same way as UNIQLO's — too few to compare */
-      fitProfileState = withReference({ hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } }) });
+      fitProfileState = withReference({ hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', construction: 'set-in', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } }) });
       page = await openPage('index.html', { viewport });
       await page.waitForSelector('#ffc-form', { timeout: 10000 });
       audit = guideAudit(page, viewport);
@@ -3133,14 +3143,15 @@ const openFallbacks = (target) => target.addInitScript(() => {
     fixture.sizes = ['S', 'M', 'L'];
     const cells = (c, l, sh, sl) => ({ chestWidth: { value: c, text: String(c) }, bodyLength: { value: l, text: String(l) }, shoulderWidth: { value: sh, text: String(sh) }, sleeveLength: { value: sl, text: String(sl) } });
     fixture.charts.garment.sizes = { S: cells(57, 65, 49, 61), M: cells(60, 67, 51, 62), L: cells(63, 69, 53, 63) };
-    fixture.verification = { status: 'verified', checkedBy: 'Test checker', checkedAt: '2026-10-16' };
-    const fixtureProfile = Object.assign(Schema.empty(), { garments: { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } }) } });
-    const answer = sizingEngine.compare(fixtureProfile, fixture);
+    /* verified and approved in memory only (fixtures/as-checked.js approvedCopy) */
+    const checked = approvedCopy(fixture);
+    const fixtureProfile = Object.assign(Schema.empty(), { garments: { hoodies: Object.assign(Schema.emptyGarment('hoodies'), { favorite: 'perfect', anchor: { brand: 'Carhartt', size: 'L', construction: 'set-in', measurements: { unit: 'cm', chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 } } }) } });
+    const answer = sizingEngine.compare(fixtureProfile, checked);
     assert.strictEqual(answer.recommended, 'M');
     accountState = accountReply({ extra: SIGNED_IN });
     fitProfileState = fitProfileReply(fixtureProfile);
     const page = await openPage('index.html', { viewport: { width: 1280, height: 900 } });
-    await page.route('**/api/size-recommendation?compare=1&candidate=1', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: answer, decision: sizingDecision.decide(fixtureProfile, fixture, { via: 'compare' }) }) }));
+    await page.route('**/api/size-recommendation?compare=1&candidate=1', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: answer, decision: sizingDecision.decide(fixtureProfile, checked, { via: 'compare' }) }) }));
     await page.waitForSelector('#ffc-form', { timeout: 10000 });
     await submitItem(page);
     await page.waitForSelector('#fit-compare .fit-compare-differences', { state: 'attached' });
@@ -3165,11 +3176,13 @@ const openFallbacks = (target) => target.addInitScript(() => {
     around.charts.garment.dimensions.chestWidth = { method: 'garment-circumference', methodSource: fixture.charts.garment.dimensions.chestWidth.methodSource };
     Object.values(around.charts.garment.sizes).forEach((row) => { row.chestWidth = { value: row.chestWidth.value * 2, text: String(row.chestWidth.value * 2) }; });
     assert.deepStrictEqual(require('../api/_sizing/schema').validate(around), []);
-    const aroundAnswer = sizingEngine.compare(fixtureProfile, around);
+    /* changed from the approved fixture, so approved again as changed (in memory only) */
+    const aroundChecked = approvedCopy(around);
+    const aroundAnswer = sizingEngine.compare(fixtureProfile, aroundChecked);
     /* scored with a chest tolerance twice the flat one: the same M as the flat chart */
     assert.strictEqual(aroundAnswer.recommended, 'M');
     const aroundPage = await openPage('index.html', { viewport: { width: 1280, height: 900 } });
-    await aroundPage.route('**/api/size-recommendation?compare=1&candidate=1', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: aroundAnswer, decision: sizingDecision.decide(fixtureProfile, around, { via: 'compare' }) }) }));
+    await aroundPage.route('**/api/size-recommendation?compare=1&candidate=1', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ comparison: aroundAnswer, decision: sizingDecision.decide(fixtureProfile, aroundChecked, { via: 'compare' }) }) }));
     await aroundPage.waitForSelector('#ffc-form', { timeout: 10000 });
     await submitItem(aroundPage);
     await aroundPage.waitForSelector('#fit-compare .fit-compare-differences', { state: 'attached' });
@@ -3303,6 +3316,7 @@ const openFallbacks = (target) => target.addInitScript(() => {
       await page.fill('#ffr-brand', 'Carhartt');
       await page.check('input[name="ff-unit"][value="cm"]');
       for (const [k, v] of Object.entries({ chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 })) await page.fill(`#ffr-m-${k}`, String(v));
+      await page.selectOption('#ffr-construction', 'set-in');
       await page.click('#ffr-use');
       await page.waitForSelector('.ff-ref--visit');
       await audit('the garment kept for this visit');
@@ -3349,7 +3363,7 @@ const openFallbacks = (target) => target.addInitScript(() => {
     accountState = accountReply({ extra: SIGNED_IN });
     /* ILLUSTRATIVE reference measurements, for the audit only */
     fitProfileState = fitProfileReply(Object.assign(require('../assets/fit-profile-schema.js').empty(), {
-      garments: { hoodies: { favorite: 'perfect', fitGoal: null, troubleZones: null, line: null, anchor: { brand: 'Carhartt', size: 'L', likes: ['chest'], notes: 'Roomy in the body', measurements: { unit: 'cm', chestWidth: 64, bodyLength: 70, shoulderWidth: 56, sleeveLength: 65 } } } }
+      garments: { hoodies: { favorite: 'perfect', fitGoal: null, troubleZones: null, line: null, anchor: { brand: 'Carhartt', size: 'L', likes: ['chest'], notes: 'Roomy in the body', construction: 'set-in', measurements: { unit: 'cm', chestWidth: 64, bodyLength: 70, shoulderWidth: 56, sleeveLength: 65 } } } }
     }));
     for (const viewport of [{ width: 1280, height: 900 }, { width: 360, height: 740 }]) {
       const page = await openPage('compare.html', { viewport });
@@ -3384,6 +3398,7 @@ const openFallbacks = (target) => target.addInitScript(() => {
     await page.selectOption('#ffr-size', 'L');
     await page.fill('#ffr-brand', 'Carhartt');
     for (const [k, v] of Object.entries({ chestWidth: 58, bodyLength: 68, shoulderWidth: 50, sleeveLength: 62 })) await page.fill(`#ffr-m-${k}`, String(v));
+      await page.selectOption('#ffr-construction', 'set-in');
     await submitItem(page);
     await page.waitForSelector('#fit-result[data-state="done"]');
     const moving = await page.evaluate(() => [...document.querySelectorAll('#find-fit *, #fit-result *')]

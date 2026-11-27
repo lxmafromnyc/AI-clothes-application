@@ -448,7 +448,9 @@ function dimensionMessage(d, context) {
   switch (d.status) {
     case 'compatible': return `${Name}: measured the same way on both, so compared.`;
     case 'convertible-estimated': return `${Name}: measured flat on one and all the way around on the other, so compared as an estimate (twice the flat width).`;
-    case 'incompatible-method': return `${Name}: measured ${d.reference && d.reference.words ? d.reference.words : 'one way'} on your garment and ${d.target && d.target.words ? d.target.words : 'another way'} on this one — not the same measurement, so not compared.`;
+    /* the same method on both, left out because the sleeves aren't known to be attached the same way (engine constructionClash) */
+    case 'incompatible-method': if (d.reference && d.target && d.reference.method && d.reference.method === d.target.method) return `${Name}: measured from a seam on both, but the sleeves aren’t known to be attached the same way on both garments, so not compared.`;
+      return `${Name}: measured ${d.reference && d.reference.words ? d.reference.words : 'one way'} on your garment and ${d.target && d.target.words ? d.target.words : 'another way'} on this one — not the same measurement, so not compared.`;
     case 'method-not-stated': return `${Name}: not compared, because it isn’t said how it was measured, so it can’t be compared reliably.`;
     case 'missing-reference': return `${Name}: your garment has no ${name} measurement, so it isn’t compared.`;
     case 'missing-target': return context && context.entered ? `${Name}: not entered for this item, so it isn’t compared.` : `${Name}: this product’s ${name} isn’t published, so it isn’t compared.`;

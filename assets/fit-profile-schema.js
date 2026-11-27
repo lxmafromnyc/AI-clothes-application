@@ -646,7 +646,8 @@
       if (GARMENT_MEASURE_KEYS.every((key) => measurements[key] === null)) measurements = null;
     }
     const notes = typeof raw.notes === 'string' && raw.notes ? raw.notes : null;
-    return { product, likes: likes.length ? likes : null, measurements, methods: shapeMethods(raw.methods, measurements), alternates: shapeAlternates(raw.alternates, measurements), notes };
+    const construction = SLEEVE_CONSTRUCTIONS.includes(raw.construction) ? raw.construction : null;
+    return { product, likes: likes.length ? likes : null, measurements, methods: shapeMethods(raw.methods, measurements), alternates: shapeAlternates(raw.alternates, measurements), notes, construction };
   }
   /* stored alternates, as stored: each a known dimension with its one
      alternate method and a number — never filled in, never re-derived.
@@ -659,7 +660,12 @@
       .map((a) => ({ dimension: a.dimension, method: a.method, value: a.value }));
     return out.length ? out : null;
   }
-  const DETAIL_KEYS = ['product', 'likes', 'measurements', 'methods', 'alternates', 'notes'];
+  /* How the garment's sleeves are attached, as the shopper says (anchor.construction): a
+     measurement taken from a seam (shoulders seam to seam, sleeve from the shoulder seam) is
+     compared only with a garment stated to be made the same way (api/_sizing/engine.js). Not
+     said is null — never assumed. */
+  const SLEEVE_CONSTRUCTIONS = ['set-in', 'raglan', 'drop-shoulder'];
+  const DETAIL_KEYS = ['product', 'likes', 'measurements', 'methods', 'alternates', 'notes', 'construction'];
   const hasDetails = (d) => Boolean(d && DETAIL_KEYS.some((k) => d[k]));
 
   /* The current shape of whatever was stored, or null for something
@@ -1003,9 +1009,13 @@
       if (!text) { fail(`${at}.notes`, 'Write your notes in words, or leave them blank.'); ok = false; } else if (text.length > PRODUCT_LIMITS.notes) { fail(`${at}.notes`, `Keep your notes to ${PRODUCT_LIMITS.notes} characters.`); ok = false; } else notes = text;
     }
     const alternates = blank(raw.alternates) ? null : readAlternates(raw.alternates, measurements, at, (field, message) => { fail(field, message); ok = false; }, garment);
+    let construction = null;
+    if (!blank(raw.construction)) {
+      if (!SLEEVE_CONSTRUCTIONS.includes(raw.construction)) { fail(`${at}.construction`, 'Choose how the sleeves are attached — set-in, raglan or dropped — or leave it as “Don’t know”.'); ok = false; } else construction = raw.construction;
+    }
     /* how each was taken: the form's own method for it, under the current
        registry version — never what a client says it measured */
-    return ok ? { product, likes, measurements, methods: measurements ? methodsFor(measurements) : null, alternates, notes } : null;
+    return ok ? { product, likes, measurements, methods: measurements ? methodsFor(measurements) : null, alternates, notes, construction } : null;
   }
 
   /* Alternate measurements, as sent: [{ dimension, value }], each one of
@@ -1407,6 +1417,7 @@
     FAVORITE_LIKES,
     GARMENT_MEASURES,
     GARMENT_MEASURE_KEYS,
+    SLEEVE_CONSTRUCTIONS,
     measureRange,
     ALTERNATE_MEASURES,
     ALTERNATE_KEYS,

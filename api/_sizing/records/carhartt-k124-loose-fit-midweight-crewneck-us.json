@@ -81,9 +81,9 @@
   ],
   "retrievedAt": "2026-10-10",
   "verification": {
-    "status": "verified",
-    "checkedBy": "claude-code-source-audit",
-    "checkedAt": "2026-10-10"
+    "status": "unverified",
+    "checkedBy": null,
+    "checkedAt": null
   },
   "notes": [
     "Carhartt shows two names: the product heading \"Marquette Crewneck Sweatshirt\" (stored as product.name) and the page title \"Men's Marquette Loose Fit Midweight Crewneck Sweatshirt\" (product.pageTitle). The garment type is stored on its own (product.garmentType).",
@@ -91,6 +91,7 @@
     "Carhartt publishes body measurements only for this product; no finished-garment measurements are recorded.",
     "The chart continues to 5XL (64) and 6XL (68), but this product is sold XS to 4XL, so only those are recorded.",
     "Tall lengths exist (Carhartt: Regular for 5' 7\" to 5' 11\", Tall for 6' to 6' 3\"); only Regular is recorded.",
-    "The chest chart is Carhartt's general \"Men Tops Size and Fit Guide\" attached to this product, not a chart for this product alone. Read from the product's own size-guide content on carhartt.com; the guide page did not render in the review browser."
+    "The chest chart is Carhartt's general \"Men Tops Size and Fit Guide\" attached to this product, not a chart for this product alone. Read from the product's own size-guide content on carhartt.com; the guide page did not render in the review browser.",
+    "2026-11-26: verification withdrawn. The only check (2026-10-10, checkedBy \"claude-code-source-audit\") was an automated source audit, not a person's approval, and no archived copy of the sources is kept. Body measurements only; unverified until a person approves it (api/_sizing/approvals.json)."
   ]
 }

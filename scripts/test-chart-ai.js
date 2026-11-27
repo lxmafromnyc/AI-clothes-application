@@ -561,9 +561,14 @@ function pathOf(c) {
     const record = engine.candidateRecord(read.chart);
     assert.strictEqual(record.verification.status, 'shopper-entered');
     const p = Schema.empty();
-    p.garments = { tshirts: Object.assign(Schema.emptyGarment('tshirts'), { favorite: 'perfect', anchor: { brand: null, size: null, measurements: { unit: 'in', chestWidth: 20.5, bodyLength: 28, sleeveLength: 8.25 }, methods: { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', sleeveLength: 'shoulder-seam-to-cuff' } } }) };
+    p.garments = { tshirts: Object.assign(Schema.emptyGarment('tshirts'), { favorite: 'perfect', anchor: { brand: null, size: null, construction: 'set-in', measurements: { unit: 'in', chestWidth: 20.5, bodyLength: 28, sleeveLength: 8.25 }, methods: { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', sleeveLength: 'shoulder-seam-to-cuff' } } }) };
     const d = decision.decide(p, record, { via: 'compare' });
-    assert.deepStrictEqual([d.outcome, d.size], ['OK', 'M'], 'the engine decides, from the page’s own numbers');
+    /* the engine decides, from the page's own numbers: chest and length compared; the sleeve, measured from the seam,
+       left out — the page's chart is a catalogue candidate, and nothing about the product says how its sleeves are
+       attached (the shopper's answer is for their own tee only) — so too few to name a size */
+    const byDim = Object.fromEntries(d.dimensions.map((x) => [x.dim, x.status]));
+    assert.deepStrictEqual([byDim.chestWidth, byDim.bodyLength, byDim.sleeveLength], ['compatible', 'compatible', 'incompatible-method'], JSON.stringify(byDim));
+    assert.deepStrictEqual([d.outcome, d.size], ['INSUFFICIENT_DATA', null], 'the engine decides, from the page’s own numbers');
     assert.ok(c.truth.values.M.chestWidth === 20.5);
   });
 
