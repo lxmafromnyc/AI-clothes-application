@@ -407,9 +407,15 @@ async function launch(display, port, apiPort) {
     return;
   }
 
-  /* the shopper's saved T-shirt (invented), measured flat in inches, each method stated */
+  /* the shopper's saved T-shirt (invented), measured flat in inches. The shop's chart is a catalogue candidate: nothing
+     about the product says how its sleeves are attached, so a measurement taken from a seam is never compared there.
+     So the sleeve is compared from the centre back — the shopper's "measure more" alternate, the one way a saved garment
+     keeps a value taken another way than the form's — beside chest and length: three of the four, chest among them. The
+     shoulders, seam to seam on both, stay out. */
   const TEE = { unit: 'in', chestWidth: 22, bodyLength: 28.75, shoulderWidth: 18.75, sleeveLength: 8.25 };
-  const METHODS = { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'shoulder-seam-to-cuff' };
+  const TEE_ALTERNATES = [{ dimension: 'sleeveLength', method: 'center-back-to-cuff', value: 17.8 }];
+  /* how the shop's chart measures each column, as its headings say */
+  const METHODS = { registry: 1, chestWidth: 'flat-width-armpit-to-armpit', bodyLength: 'high-point-shoulder-to-hem', shoulderWidth: 'seam-to-seam', sleeveLength: 'center-back-to-cuff' };
 
   console.log('\nsigning in to Fynd, as on the site');
 
@@ -424,7 +430,7 @@ async function launch(display, port, apiPort) {
     assert.deepStrictEqual([session.sameSite, session.secure, session.httpOnly], ['Lax', true, true]);
     const user = await users.byEmail(email);
     const p = Schema.empty();
-    p.garments = { tshirts: Object.assign(Schema.emptyGarment('tshirts'), { favorite: 'perfect', anchor: { brand: 'Owned Brand', size: 'L', measurements: TEE, methods: METHODS } }) };
+    p.garments = { tshirts: Object.assign(Schema.emptyGarment('tshirts'), { favorite: 'perfect', anchor: { brand: 'Owned Brand', size: 'L', measurements: TEE, alternates: TEE_ALTERNATES } }) };
     await fitProfiles.save(user.id, p);
   });
 
