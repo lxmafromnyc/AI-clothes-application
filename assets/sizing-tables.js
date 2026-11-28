@@ -118,10 +118,28 @@
   const METHOD_WORDS = /\bcent(?:er|re)[\s-]+back\b|\bseam[\s-]+to[\s-]+seam\b|\barmpit[\s-]+to[\s-]+armpit\b|\bpit[\s-]+to[\s-]+pit\b|\bhigh(?:est)?[\s-]+point(?:\s+of)?(?:\s+the)?\s+shoulder\b|\bHPS\b|\bfrom\s+(?:the\s+)?shoulder(?:\s+seam)?\b|\blaid\s+flat\b|\bmeasured\s+flat\b|\bhalf\b|\bcircumference\b|\ball\s+(?:the\s+way\s+)?around\b|\bfrom\s+(?:the\s+)?crotch\b/gi;
   const TABLE_FLAT = /\blaid flat\b|\bmeasured flat\b|\bflat measurements?\b/i;
   const WIDTH_COLUMN = /\b(chest|bust|waist|hips?|seat|thigh|hem|width|across|opening|knee)\b/i;
+  /* The shoulders measured across their broadest part, in one phrase that says
+     so of the shoulders — never "broadest" found elsewhere in the same text
+     ("Shoulder width; chest at the broadest part" is about the chest):
+       "broadest part (or point) of (the) shoulder(s)"
+       "Shoulder (width) (broadest part)" — the shoulder heading, and a bracket
+       holding nothing but "(measured) (at) (the) broadest part/point"
+     The words as said ("broadest part"), or null. The one reader of it for
+     both methodsOf (below) and chart-reading.js's methodSaid. */
+  const BROADEST_OF_SHOULDERS = /\bbroadest\s+(?:part|point)\s+of\s+(?:the\s+)?shoulders?\b/i;
+  const SHOULDER_BROADEST_BRACKET = /\bshoulders?(?:\s+width)?\s*\(\s*(?:measured\s+)?(?:at\s+)?(?:the\s+)?(broadest\s+(?:part|point))\s*\)/i;
+  function broadestShoulder(text) {
+    const t = String(text || '');
+    const m = t.match(BROADEST_OF_SHOULDERS) || t.match(SHOULDER_BROADEST_BRACKET);
+    return m ? (m[1] || m[0]).replace(/\s+/g, ' ').toLowerCase() : null;
+  }
+
   function methodsOf(columns, text) {
     const flat = TABLE_FLAT.test(text || '');
     const out = columns.map((c) => {
       const own = (c.match(METHOD_WORDS) || []).map((w) => w.replace(/\s+/g, ' '));
+      const broadest = broadestShoulder(c);
+      if (broadest) own.push(broadest);
       if (own.length) return own.join(', ');
       return flat && WIDTH_COLUMN.test(c) ? 'laid flat (said of the whole table)' : null;
     });
@@ -150,5 +168,5 @@
     return out;
   }
 
-  return { MAX_CELL, MAX_ROWS, MAX_COLUMNS, GUIDE_WORDS, SIZE_HEADER, SIZE_VALUE, MEASURE, sizeTable, unitOf, kindOf, methodsOf, labelTable };
+  return { MAX_CELL, MAX_ROWS, MAX_COLUMNS, GUIDE_WORDS, SIZE_HEADER, SIZE_VALUE, MEASURE, sizeTable, unitOf, kindOf, methodsOf, broadestShoulder, labelTable };
 });
