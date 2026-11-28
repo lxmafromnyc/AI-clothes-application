@@ -84,7 +84,8 @@
       return null;
     }
     if (dim === 'bodyLength') {
-      if (/cent(er|re)[\s-]*back|back length|length \(back\)/.test(w)) return 'center-back-to-hem';
+      /* "Length (back)": a heading split by a line break reads "Length(back)" */
+      if (/cent(er|re)[\s-]*back|back length|length\s*\(back\)/.test(w)) return 'center-back-to-hem';
       if (/\bhps\b|high(est)?[\s-]*point|from (the )?shoulder/.test(w)) return 'high-point-shoulder-to-hem';
       return null;
     }
@@ -94,7 +95,15 @@
       return null;
     }
     if (dim === 'shoulderWidth') {
-      if (/seam[\s-]*to[\s-]*seam/.test(w)) return 'seam-to-seam';
+      /* two different methods, never interchangeable. "Broadest" counts only in a
+         phrase that says it of the shoulders (Tables.broadestShoulder) — not a
+         "broadest" from another clause, which may describe the chest or hips.
+         Seam to seam beside any "broadest" at all is ambiguous: neither. */
+      const seam = /seam[\s-]*to[\s-]*seam/.test(w);
+      const broadest = Tables.broadestShoulder(w) !== null;
+      if (seam && /\bbroadest\b/.test(w)) return null;
+      if (seam) return 'seam-to-seam';
+      if (broadest) return 'broadest-part-of-shoulders';
       return null;
     }
     return null;

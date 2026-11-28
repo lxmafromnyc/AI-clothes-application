@@ -3409,6 +3409,48 @@ or the site.
 - `scripts/test-fit-panel-real-chrome.js`: the whole workflow in a visible
   Chrome, through a real click on the toolbar button. Fynd's handlers answer
   under the production API name, with a real session cookie.
+- `scripts/test-uniqlo-capture.js`: the real `collect.js` and `extract.js` on a
+  **captured** UNIQLO Size Guide (E471808, both tabs, saved from a browser on
+  2026-11-28 into `scripts/fixtures/fit-panel/shop/uniqlo-*-size-modal.html`).
+  The suite re-hashes each captured drawer. These files are fixtures, not
+  sizing evidence, and no record or approval uses them. Passing doesn't mean
+  the live page still reads the same way.
+
+What the capture shows the reading does:
+- **Read from the headings:** all eight sizes and values; length and sleeve
+  from the centre back; shoulders seam to seam.
+- **Left to the shopper:** the chest method (the heading says only "Chest"),
+  the unit (the drawer offers CM and IN as radio buttons, and `collect.js`
+  reads no form control), and the "actual measurements of the product" claim,
+  which is text above the table rather than the chart itself.
+- **Body Size tab:** read as a body chart and never compared.
+
+The method reader (`assets/chart-reading.js` `methodSaid`) and the table
+labeller (`assets/sizing-tables.js` `methodsOf`) share one matcher,
+`broadestShoulder`. It maps to `broadest-part-of-shoulders` only from a
+phrase that says "broadest" of the shoulders: "broadest part/point of (the)
+shoulder(s)", or a shoulder heading followed by a bracket holding only
+"(measured) (at) (the) broadest part/point", such as
+"Shoulder width (broadest part)".
+
+A "broadest" in another clause gives no method, whether the clauses are
+separated by `;`, `.`, `|`, a comma or a new line. So do "Shoulder width; chest
+at the broadest part", "Shoulder width (hip, broadest point)" and "broadest
+part" on its own, as in a model's quoted evidence. "Seam to seam" maps to
+`seam-to-seam`. Seam to seam beside any "broadest" gives neither. It
+also reads "Length(back)", a heading split by a line break, as "Length (back)".
+
+Not built yet:
+- **Body cells read twice.** In the Body Size tab, each cell holds a visible
+  range and a screen-reader copy of it ("30 ¾ - 33" and "30 ¾ to 33").
+  `collect.js` joins the two. The cells are refused as ranges either way, so
+  nothing wrong is compared, but the text shown for that chart is doubled.
+- **Its unlabelled second column is dropped.**
+- **Shoulder header conflict.** The live E471808 drawer labels the shoulder
+  "Shoulder width (seam to seam)". The record
+  (`uniqlo-e471808-…-us.json`) records it as `broadest-part-of-shoulders`,
+  from a transcription whose header read only "Shoulder width". The record is
+  unchanged and pending review, and that review has to settle the conflict.
 
 Its `--live` mode reads real retailer pages. None has been run yet, because
 the environment it was built in could not reach them.
